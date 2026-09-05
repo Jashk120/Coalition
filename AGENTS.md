@@ -32,9 +32,13 @@
 - Write short imperative commit messages, for example: `Add health check endpoint`.
 - Do not commit unrelated files, generated output, secrets, or another contributor's work.
 - Never use destructive Git commands or rewrite shared history without explicit approval.
+- Do not commit until the task is complete and the user has approved the changes.
+- Commit once the user approves, using a single focused commit for the approved work.
 
 ## Collaboration
 
 - Communicate progress concisely, including blockers and decisions that need input.
 - Ask before actions that are destructive, irreversible, externally visible, or meaningfully broaden scope.
 - Leave the repository in a clean, understandable state for the next person.
+- Once a task is done, stop and wait for the user to review and approve before committing or moving on to the next task.
+- Present completed work for review with a short summary of what changed and how it was validated.
