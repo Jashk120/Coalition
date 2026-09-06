@@ -28,10 +28,20 @@
 
 ## Git and commits
 
-- Keep commits small, focused, and independently useful.
+- Commit frequently: after each atomic, working unit — not at end of day.
+  A unit is one logical change that passes its relevant check (e.g. new
+  contract + Foundry test green, SDK module + `npm run check` clean,
+  docs section done). Prefer 5 small commits over 1 big one.
+- Before each commit, inspect `git status`, `git diff`, and `git log --oneline -5`;
+  stage only intended files. Never commit secrets, generated output
+  (`dist/`, `node_modules/`), or another contributor's work.
 - Write short imperative commit messages, for example: `Add health check endpoint`.
-- Do not commit unrelated files, generated output, secrets, or another contributor's work.
+- Push to `origin/main` after each commit (or at least every 1-2 commits) so
+  work is never stranded locally. If push fails, report it immediately.
 - Never use destructive Git commands or rewrite shared history without explicit approval.
+- Never leave the tree broken at a commit boundary: the relevant check
+  (Foundry test, `npm run check`/`build`, `go test`/`go vet`) must pass
+  on the files touched by that commit.
 
 ## Collaboration
 
