@@ -106,7 +106,34 @@ balances, marketplace search) and `packages/agent-cli` (terminal chat UI).
 Each kit: `bun install` → copy `.env.example` → `bun run demo` (bootstrap →
 fund → Marketplace search → pay). Arc-testnet-only samples, not production code.
 
-## 6. Seller side (resale market only)
+## 6. Resale market: buyer via Nanopayments CLI, seller via SDK on Arc
+
+Official Agent Nanopayments path
+(`developers.circle.com/agent-stack/agent-nanopayments/quickstart`) is
+buyer-side and CLI-native — deposit, discover, pay, check balance:
+
+```sh
+circle gateway deposit --amount 5 --address 0xBUYER --chain BASE --method direct
+circle services search "compute"
+circle services inspect https://seller.example/compute
+circle services pay https://seller.example/compute \
+  --address 0xBUYER --chain BASE --max-amount 0.01
+circle gateway balance --address 0xBUYER --chain BASE
+```
+
+Docs use cases name ours verbatim: "On-demand compute and data" and
+"Agent-to-agent commerce". This CLI flow is the blessed Nanopayments demo
+moment for the Agentic bounty — prefer it over hand-rolled buyer code.
+(App-code alternative: `gateway/nanopayments/quickstarts/buyer`.)
+
+Arc is Gateway-Nanopayments-supported (verified live, consistent with
+Circle's own Arc Testnet seller blog), so the seller side is a supported
+path, not a workaround. The remaining CLI question is narrow: the quickstart
+examples run deposit/pay on BASE, so whether `circle services pay --chain
+ARC-TESTNET` works with an Agent Wallet needs a live CLI run (email OTP)
+to settle. Separately, the SDK seller path on Arc is verified live
+(`eip155:5042002` in `GET /v1/x402/supported`, method
+`GatewayWalletBatched`, USDC `0x3600…0000`):
 
 ```ts
 import { createGatewayMiddleware } from "@circle-fin/x402-batching/server"; // v3.4.0
@@ -114,11 +141,17 @@ const gateway = createGatewayMiddleware({ sellerAddress: "0xSURPLUS_AGENT" });
 app.get("/compute", gateway.require("$0.01"), handler);
 ```
 
-Buyer: `GatewayClient({ chain: "arcTestnet" })` from
+Buyer via SDK (if CLI is unsuitable):
+`GatewayClient({ chain: "arcTestnet" })` from
 `@circle-fin/x402-batching/client` (+ `@x402/core`, `@x402/evm`, `viem`).
-Gateway REST alternative (no SDK): `POST /v1/x402/settle` on
-`https://gateway-api-testnet.circle.com`. Blocking check before building on
-this: Gateway batching is EOA-signatures-only — confirm Agent Wallets qualify.
+REST alternative (no SDK): `POST /v1/x402/settle` on
+`https://gateway-api-testnet.circle.com` (verify/settle routes confirmed
+live). EOA restriction is confirmed at scheme level for BOTH rails: Circle
+states EOA-only signing for the x402 flow, and Nanopayments signs offchain
+EIP-3009 authorizations (single-key ECDSA) that a 2-of-2 MPC Agent Wallet
+cannot produce directly. Narrowed open question: does the CLI derive an
+EOA-compatible signer internally for nanopayment signing, or genuinely fail?
+Settles with the same live CLI run as the Arc pay question above.
 
 ## 7. What NOT to adopt
 
