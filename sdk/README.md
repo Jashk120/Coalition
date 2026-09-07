@@ -60,8 +60,9 @@ if (!wouldExceedTarget(state, toAtomicUsdc("2"))) {
 }
 ```
 
-> **Placeholder ABI.** `src/pool/abi.ts` is hand-minimal until `contracts/`
-> lands — replace it with the Foundry artifact and do not extend it meanwhile.
+> **Generated ABI.** `src/pool/abi.ts` is synced from
+> `contracts/out/ResourcePool.sol/ResourcePool.json` — regenerate (never
+> hand-edit) via `(cd contracts && forge build) && node sdk/scripts/sync-pool-abi.mjs`.
 
 ## Development
 
