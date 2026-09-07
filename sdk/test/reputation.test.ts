@@ -37,7 +37,7 @@ describe("getReputationSummary", () => {
       expect(data.startsWith(selector)).toBe(true);
       return encodeAbiParameters(
         [{ type: "uint64" }, { type: "int128" }, { type: "uint8" }],
-        [3n, 87n, 0n],
+        [3n, 87n, 0],
       );
     });
 
@@ -58,7 +58,7 @@ describe("getReputationSummary", () => {
     const publicClient = mockReads(() =>
       encodeAbiParameters(
         [{ type: "uint64" }, { type: "int128" }, { type: "uint8" }],
-        [1n, -32n, 1n],
+        [1n, -32n, 1],
       ),
     );
 
@@ -112,7 +112,7 @@ describe("readFeedback", () => {
           { type: "string" },
           { type: "bool" },
         ],
-        [87n, 0n, "starred", "", false],
+        [87n, 0, "starred", "", false],
       );
     });
 
