@@ -53,7 +53,11 @@ export async function dropOut(
   return { hash };
 }
 
-/** Close an expired, unfilled pool so participants can be refunded. */
+/**
+ * Close an expired, unfilled pool. This only snapshots refund accounting —
+ * no funds move here. Each remaining participant then pulls their share
+ * (own stake plus pro-rata forfeiture) with claimRefund.
+ */
 export async function finalizeExpired(
   params: PoolWriteParams,
 ): Promise<{ readonly hash: Hash }> {
@@ -67,7 +71,25 @@ export async function finalizeExpired(
   return { hash };
 }
 
-/** Settle a filled pool atomically to the provider. */
+/**
+ * Pull the caller's snapshotted refund after finalizeExpired. One caller
+ * per call — each claim is O(1) and independent, so a participant that
+ * never claims cannot grief anyone else's refund.
+ */
+export async function claimRefund(
+  params: PoolWriteParams,
+): Promise<{ readonly hash: Hash }> {
+  const hash = await params.walletClient.writeContract({
+    address: params.pool,
+    abi: resourcePoolAbi,
+    functionName: "claimRefund",
+    account: params.account,
+    chain: params.walletClient.chain,
+  });
+  return { hash };
+}
+
+/** Settle a filled pool atomically to the provider. O(1) — no feedback written here. */
 export async function settlePool(
   params: PoolWriteParams,
 ): Promise<{ readonly hash: Hash }> {
@@ -75,6 +97,30 @@ export async function settlePool(
     address: params.pool,
     abi: resourcePoolAbi,
     functionName: "settle",
+    account: params.account,
+    chain: params.walletClient.chain,
+  });
+  return { hash };
+}
+
+export type RecordCompletionsParams = PoolWriteParams & {
+  /** Max participants to process from the cursor this call — repeat until drained. */
+  readonly maxRecords: bigint;
+};
+
+/**
+ * Write completion feedback for up to maxRecords participants from the
+ * settle cursor. Repeat until the cursor is drained (see feedbackCursor
+ * via getPoolState follow-ups) — each participant is recorded at most once.
+ */
+export async function recordCompletions(
+  params: RecordCompletionsParams,
+): Promise<{ readonly hash: Hash }> {
+  const hash = await params.walletClient.writeContract({
+    address: params.pool,
+    abi: resourcePoolAbi,
+    functionName: "recordCompletions",
+    args: [params.maxRecords],
     account: params.account,
     chain: params.walletClient.chain,
   });
@@ -127,4 +173,35 @@ export async function getPoolState(
  */
 export function wouldExceedTarget(state: PoolState, amount: bigint): boolean {
   return state.totalCommitted + amount > state.target;
+}
+
+/** Deploy-time pool metadata: resource terms, committer cap, feedback progress. */
+export type PoolMetadata = {
+  readonly resourceURI: string;
+  readonly maxParticipants: bigint;
+  readonly feedbackCursor: bigint;
+};
+
+/** Read the pool's resource terms, committer cap, and feedback cursor in one round trip. */
+export async function getPoolMetadata(
+  params: GetPoolStateParams,
+): Promise<PoolMetadata> {
+  const [resourceURI, maxParticipants, feedbackCursor] = await Promise.all([
+    params.publicClient.readContract({
+      address: params.pool,
+      abi: resourcePoolAbi,
+      functionName: "resourceURI",
+    }),
+    params.publicClient.readContract({
+      address: params.pool,
+      abi: resourcePoolAbi,
+      functionName: "maxParticipants",
+    }),
+    params.publicClient.readContract({
+      address: params.pool,
+      abi: resourcePoolAbi,
+      functionName: "feedbackCursor",
+    }),
+  ]);
+  return { resourceURI, maxParticipants, feedbackCursor };
 }

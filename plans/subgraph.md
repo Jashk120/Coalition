@@ -56,6 +56,10 @@ immutable `Commitment`, `Settlement`, `Refund`, `Dropout`, `Completion`
 (tx-hash+logIndex ids, amounts as `BigInt`, `@derivedFrom` back to pool).
 Map `Settled` as "funds left the pool", NOT "threshold met" — it also fires
 on the `finalizeExpired` all-dropped sweep to `provider`.
+`finalizeExpired` only snapshots: map `ExpiredFinalized` as the expiry
+marker and each per-claimant `Refunded` (emitted by `claimRefund`, possibly
+many blocks later) as funds leaving. `CompletionRecorded` rows arrive via
+paginated `recordCompletions` calls after `settle`, not in the settle tx.
 ERC-8004 side: `Agent` (id, owner, agentURI) + immutable `Feedback`
 (value `BigInt` — `int128` overflows `Int`/`Int8`; `valueDecimals` as `Int`;
 `feedbackIndex: uint64` as `BigInt`; store un-indexed `tag1`/`tag2`, never the

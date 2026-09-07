@@ -4,10 +4,13 @@ import { describe, expect, it } from "vitest";
 import { ARC_TESTNET } from "../src/chains/index.js";
 import { AgentId } from "../src/identity/index.js";
 import {
+  claimRefund,
   commitToPool,
   dropOut,
   finalizeExpired,
+  getPoolMetadata,
   getPoolState,
+  recordCompletions,
   settlePool,
   wouldExceedTarget,
 } from "../src/pool/index.js";
@@ -148,6 +151,20 @@ describe("finalizeExpired and settlePool", () => {
     );
     await settlePool({ walletClient, account: TEST_ACCOUNT, pool: POOL });
     expect(capture.data?.startsWith(toFunctionSelector("settle()"))).toBe(true);
+    // Expiry is now snapshot + pull: finalize snapshots, claimRefund pulls.
+    await claimRefund({ walletClient, account: TEST_ACCOUNT, pool: POOL });
+    expect(capture.data?.startsWith(toFunctionSelector("claimRefund()"))).toBe(
+      true,
+    );
+    await recordCompletions({
+      walletClient,
+      account: TEST_ACCOUNT,
+      pool: POOL,
+      maxRecords: 50n,
+    });
+    expect(
+      capture.data?.startsWith(toFunctionSelector("recordCompletions(uint256)")),
+    ).toBe(true);
   });
 });
 
@@ -161,6 +178,42 @@ describe("getPoolState", () => {
 
     // Then: every field matches the mocked views
     expect(state).toEqual(STATE);
+  });
+});
+
+describe("getPoolMetadata", () => {
+  it("maps the deploy-time views into one PoolMetadata", async () => {
+    const selectors = {
+      resourceURI: toFunctionSelector("resourceURI()"),
+      maxParticipants: toFunctionSelector("maxParticipants()"),
+      feedbackCursor: toFunctionSelector("feedbackCursor()"),
+    } as const;
+    const publicClient = createPublicClient({
+      chain: ARC_TESTNET,
+      transport: custom({
+        request: async ({ method, params }) => {
+          if (method === "eth_chainId") return "0x4cef52";
+          expect(method).toBe("eth_call");
+          const data = (params as [{ readonly data: `0x${string}` }])[0].data;
+          if (data.startsWith(selectors.resourceURI)) {
+            return encodeAbiParameters([{ type: "string" }], ["ipfs://terms"]);
+          }
+          if (data.startsWith(selectors.maxParticipants)) {
+            return encodeAbiParameters([{ type: "uint256" }], [200n]);
+          }
+          expect(data.startsWith(selectors.feedbackCursor)).toBe(true);
+          return encodeAbiParameters([{ type: "uint256" }], [3n]);
+        },
+      }),
+    });
+
+    const metadata = await getPoolMetadata({ publicClient, pool: POOL });
+
+    expect(metadata).toEqual({
+      resourceURI: "ipfs://terms",
+      maxParticipants: 200n,
+      feedbackCursor: 3n,
+    });
   });
 });
 

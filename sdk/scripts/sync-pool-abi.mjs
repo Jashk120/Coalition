@@ -17,11 +17,12 @@ const header = `/**
  * Regenerate after any ResourcePool.sol change:
  *   (cd contracts && forge build) && node sdk/scripts/sync-pool-abi.mjs
  *
- * The nine functions + four events the SDK calls (commit, dropOut,
- * finalizeExpired, settle, target, totalCommitted, settled, expired,
- * participantCount, Committed, Settled, Refunded, DroppedOut) keep the exact
- * shapes the placeholder had; the rest (bindAgentId, views, CompletionRecorded,
- * custom errors) is additive and invisible to existing callers.
+ * The SDK-called functions + events (commit, dropOut, finalizeExpired,
+ * claimRefund, settle, recordCompletions, target, totalCommitted, settled,
+ * expired, participantCount, resourceURI, maxParticipants, Committed, Settled,
+ * ExpiredFinalized, Refunded, DroppedOut) keep the exact shapes the
+ * placeholder had; the rest (bindAgentId, views, CompletionRecorded, custom
+ * errors) is additive and invisible to existing callers.
  */
 export const resourcePoolAbi = `;
 

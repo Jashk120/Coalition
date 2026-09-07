@@ -4,11 +4,12 @@
  * Regenerate after any ResourcePool.sol change:
  *   (cd contracts && forge build) && node sdk/scripts/sync-pool-abi.mjs
  *
- * The nine functions + four events the SDK calls (commit, dropOut,
- * finalizeExpired, settle, target, totalCommitted, settled, expired,
- * participantCount, Committed, Settled, Refunded, DroppedOut) keep the exact
- * shapes the placeholder had; the rest (bindAgentId, views, CompletionRecorded,
- * custom errors) is additive and invisible to existing callers.
+ * The SDK-called functions + events (commit, dropOut, finalizeExpired,
+ * claimRefund, settle, recordCompletions, target, totalCommitted, settled,
+ * expired, participantCount, resourceURI, maxParticipants, Committed, Settled,
+ * ExpiredFinalized, Refunded, DroppedOut) keep the exact shapes the
+ * placeholder had; the rest (bindAgentId, views, CompletionRecorded, custom
+ * errors) is additive and invisible to existing callers.
  */
 export const resourcePoolAbi = [
   {
@@ -38,6 +39,16 @@ export const resourcePoolAbi = [
         "name": "reputationRegistry_",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "resourceURI_",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "maxParticipants_",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"
@@ -71,6 +82,13 @@ export const resourcePoolAbi = [
         "internalType": "uint256"
       }
     ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimRefund",
+    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -166,6 +184,19 @@ export const resourcePoolAbi = [
   },
   {
     "type": "function",
+    "name": "feedbackCursor",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "finalizeExpired",
     "inputs": [],
     "outputs": [],
@@ -218,6 +249,38 @@ export const resourcePoolAbi = [
   },
   {
     "type": "function",
+    "name": "hasClaimed",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "maxParticipants",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "participantCount",
     "inputs": [],
     "outputs": [
@@ -244,6 +307,71 @@ export const resourcePoolAbi = [
   },
   {
     "type": "function",
+    "name": "recordCompletions",
+    "inputs": [
+      {
+        "name": "maxRecords",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "refundActiveTotal",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "refundBalance",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "refundClaimed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "refundRemaining",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "reputationRegistry",
     "inputs": [],
     "outputs": [
@@ -251,6 +379,19 @@ export const resourcePoolAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "resourceURI",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "stateMutability": "view"
@@ -373,6 +514,25 @@ export const resourcePoolAbi = [
   },
   {
     "type": "event",
+    "name": "ExpiredFinalized",
+    "inputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimants",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Refunded",
     "inputs": [
       {
@@ -447,6 +607,11 @@ export const resourcePoolAbi = [
   },
   {
     "type": "error",
+    "name": "BadMaxParticipants",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotExpired",
     "inputs": [
       {
@@ -484,6 +649,16 @@ export const resourcePoolAbi = [
   },
   {
     "type": "error",
+    "name": "NotSettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToWithdraw",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OverTarget",
     "inputs": [
       {
@@ -517,6 +692,17 @@ export const resourcePoolAbi = [
     "type": "error",
     "name": "Reentrant",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyParticipants",
+    "inputs": [
+      {
+        "name": "maxParticipants",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

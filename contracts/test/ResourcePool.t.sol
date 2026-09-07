@@ -77,6 +77,7 @@ contract ResourcePoolTest is Test {
 
     event Committed(address indexed agent, uint256 amount);
     event Settled(uint256 total);
+    event ExpiredFinalized(uint256 balance, uint256 claimants);
     event Refunded(address indexed agent, uint256 amount);
     event DroppedOut(address indexed agent, uint256 forfeited);
 
@@ -84,7 +85,7 @@ contract ResourcePoolTest is Test {
         usdc = new MockUSDC();
         rep = new MockReputation();
         deadline = uint64(block.timestamp + 7 days);
-        pool = new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep));
+        pool = new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "ipfs://test-resource", 10);
 
         usdc.mint(alice, 100_000_000);
         usdc.mint(bob, 100_000_000);
@@ -123,12 +124,59 @@ contract ResourcePoolTest is Test {
         assertEq(usdc.balanceOf(provider), TARGET);
         assertEq(usdc.balanceOf(address(pool)), 0, "no stranded funds");
 
-        // Completion feedback composed into ERC-8004 for bound agents only.
+        // settle() itself writes no feedback (O(1) fund movement); completion
+        // feedback is paginated afterwards. Bound agents only.
+        assertEq(rep.callCount(), 0, "settle writes no feedback");
+        pool.recordCompletions(10);
+        assertEq(pool.feedbackCursor(), 3);
         assertEq(rep.callCount(), 2);
         assertEq(rep.ids(0), 1);
         assertEq(rep.values(0), 1);
         assertEq(rep.tag1s(0), "completion");
         assertEq(rep.ids(1), 2);
+    }
+
+    function test_recordCompletionsPaginatesAndSkips() public {
+        _commit(alice, 4_000_000);
+        _commit(bob, 3_000_000);
+        _commit(carol, 3_000_000);
+
+        // Only alice binds; bob stays unbound (skipped), carol drops (skipped).
+        vm.prank(alice);
+        pool.bindAgentId(1);
+        vm.prank(carol);
+        pool.dropOut(3);
+
+        // Forfeiture counts toward target, so the pool still fills and settles.
+        pool.settle();
+        assertEq(usdc.balanceOf(provider), TARGET);
+        assertEq(rep.callCount(), 1, "only carol's dropout write so far");
+        assertEq(rep.values(0), -1);
+
+        // One record per call: cursor advances, each participant recorded once.
+        pool.recordCompletions(1);
+        assertEq(pool.feedbackCursor(), 1);
+        assertEq(rep.callCount(), 2);
+        assertEq(rep.ids(1), 1);
+        assertEq(rep.values(1), 1);
+        assertEq(rep.tag1s(1), "completion");
+
+        pool.recordCompletions(1);
+        assertEq(pool.feedbackCursor(), 2);
+        assertEq(rep.callCount(), 2, "unbound bob skipped");
+
+        pool.recordCompletions(10); // clamped at the end, no overrun
+        assertEq(pool.feedbackCursor(), 3);
+        assertEq(rep.callCount(), 2, "dropped carol skipped");
+
+        pool.recordCompletions(10); // past-the-end call is a no-op
+        assertEq(rep.callCount(), 2);
+    }
+
+    function test_recordCompletionsBeforeSettleReverts() public {
+        _commit(alice, 1_000_000);
+        vm.expectRevert(ResourcePool.NotSettled.selector);
+        pool.recordCompletions(10);
     }
 
     function test_settleAfterDeadlineStillWorksWhenFilled() public {
@@ -150,29 +198,53 @@ contract ResourcePoolTest is Test {
         vm.warp(deadline + 1);
         assertTrue(pool.expired(), "unfilled pool reads expired past deadline");
 
+        // finalizeExpired only snapshots — no funds move yet.
+        vm.expectEmit(false, false, false, true);
+        emit ExpiredFinalized(6_000_000, 2);
+        pool.finalizeExpired();
+        assertEq(usdc.balanceOf(address(pool)), 6_000_000, "snapshot holds funds");
+        assertEq(pool.refundRemaining(), 2);
+
+        // Each participant pulls their own share.
         uint256 aliceBefore = usdc.balanceOf(alice);
         uint256 bobBefore = usdc.balanceOf(bob);
 
         vm.expectEmit(true, false, false, true);
         emit Refunded(alice, 4_000_000);
+        vm.prank(alice);
+        pool.claimRefund();
+
         vm.expectEmit(true, false, false, true);
         emit Refunded(bob, 2_000_000);
-        pool.finalizeExpired();
+        vm.prank(bob);
+        pool.claimRefund();
 
         assertEq(usdc.balanceOf(alice) - aliceBefore, 4_000_000);
         assertEq(usdc.balanceOf(bob) - bobBefore, 2_000_000);
         assertEq(usdc.balanceOf(address(pool)), 0, "no stranded funds");
+        assertEq(pool.refundRemaining(), 0);
     }
 
-    function test_refundDustNeverStrands() public {
+    function test_claimOrderIndependentAndDustToLast() public {
         // 7 USDC across 3 agents: 7/3-style splits leave dust without the fix-up.
         _commit(alice, 3_000_000);
         _commit(bob, 2_000_000);
         _commit(carol, 2_000_000);
         vm.warp(deadline + 1);
         pool.finalizeExpired();
+
+        // Claim out of join order; the LAST claimant absorbs dust either way.
+        vm.prank(carol);
+        pool.claimRefund();
+        vm.prank(bob);
+        pool.claimRefund();
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        pool.claimRefund();
+
         assertEq(usdc.balanceOf(address(pool)), 0, "no stranded funds");
         assertEq(usdc.balanceOf(provider), 0, "nothing siphoned to provider");
+        assertGt(usdc.balanceOf(alice) - aliceBefore, 0, "last claimant got remainder");
     }
 
     // --- Path 3: dropout + forfeit ----------------------------------------------
@@ -210,13 +282,63 @@ contract ResourcePoolTest is Test {
         pool.dropOut(11);
 
         vm.warp(deadline + 1);
-        uint256 bobBefore = usdc.balanceOf(bob);
         pool.finalizeExpired();
 
         // Bob staked 2M of 6M active... pool holds 6M: bob gets all 6M (own 2M + alice's 4M forfeit).
+        uint256 bobBefore = usdc.balanceOf(bob);
+        vm.prank(bob);
+        pool.claimRefund();
         assertEq(usdc.balanceOf(bob) - bobBefore, 6_000_000);
         assertEq(usdc.balanceOf(address(pool)), 0, "no stranded funds");
         assertEq(usdc.balanceOf(alice), 100_000_000 - 4_000_000, "dropout gets nothing back");
+
+        // Dropouts have no share to pull.
+        vm.prank(alice);
+        vm.expectRevert(ResourcePool.NothingToWithdraw.selector);
+        pool.claimRefund();
+    }
+
+    function test_claimRefundEdgeCasesRevert() public {
+        _commit(alice, 4_000_000);
+
+        // Nothing to pull before expiry is finalized.
+        vm.prank(alice);
+        vm.expectRevert(ResourcePool.NothingToWithdraw.selector);
+        pool.claimRefund();
+
+        vm.warp(deadline + 1);
+        pool.finalizeExpired();
+
+        // Strangers with no stake revert.
+        vm.prank(bob);
+        vm.expectRevert(ResourcePool.NothingToWithdraw.selector);
+        pool.claimRefund();
+
+        // Double-claim reverts.
+        vm.prank(alice);
+        pool.claimRefund();
+        vm.prank(alice);
+        vm.expectRevert(ResourcePool.NothingToWithdraw.selector);
+        pool.claimRefund();
+    }
+
+    function test_nonClaimantDoesNotBlockOthers() public {
+        // The pull pattern's whole point: one participant that never claims
+        // (or is a contract with hostile fallback logic — plain ERC-20
+        // transfers invoke no receiver code, but independence holds regardless)
+        // cannot grief anyone else's refund.
+        _commit(alice, 4_000_000);
+        _commit(bob, 2_000_000);
+        vm.warp(deadline + 1);
+        pool.finalizeExpired();
+
+        // Alice never claims. Bob still gets his exact share.
+        uint256 bobBefore = usdc.balanceOf(bob);
+        vm.prank(bob);
+        pool.claimRefund();
+        assertEq(usdc.balanceOf(bob) - bobBefore, 2_000_000);
+        // Alice's share simply waits for her; nothing of bob's is stuck.
+        assertEq(usdc.balanceOf(address(pool)), 4_000_000);
     }
 
     function test_allDroppedOutSendsBalanceToProvider() public {
@@ -255,6 +377,11 @@ contract ResourcePoolTest is Test {
         vm.stopPrank();
         vm.expectRevert(ResourcePool.PoolSettled.selector);
         pool.finalizeExpired();
+
+        // Pull path is also closed: nothing was ever snapshotted.
+        vm.prank(bob);
+        vm.expectRevert(ResourcePool.NothingToWithdraw.selector);
+        pool.claimRefund();
     }
 
     function test_finalizeBeforeDeadlineReverts() public {
@@ -338,12 +465,56 @@ contract ResourcePoolTest is Test {
     // --- Registry failures never brick funds --------------------------------------
 
     function test_reputationRevertDoesNotBrickSettle() public {
-        ResourcePool noRegistry = new ResourcePool(address(usdc), provider, TARGET, deadline, address(0));
+        ResourcePool noRegistry =
+            new ResourcePool(address(usdc), provider, TARGET, deadline, address(0), "", 10);
         vm.startPrank(alice);
         usdc.approve(address(noRegistry), TARGET);
         noRegistry.commit(TARGET);
         vm.stopPrank();
         noRegistry.settle();
         assertEq(usdc.balanceOf(provider), TARGET);
+    }
+
+    // --- Deploy-time decisions: resourceURI + maxParticipants -------------------
+
+    function test_resourceURIStoredImmutable() public view {
+        assertEq(pool.resourceURI(), "ipfs://test-resource");
+        assertEq(pool.maxParticipants(), 10);
+    }
+
+    function test_zeroMaxParticipantsReverts() public {
+        vm.expectRevert(ResourcePool.BadMaxParticipants.selector);
+        new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "", 0);
+    }
+
+    function test_commitBeyondMaxParticipantsReverts() public {
+        ResourcePool small =
+            new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "", 2);
+        address dave = makeAddr("dave");
+        usdc.mint(dave, 100_000_000);
+
+        vm.startPrank(alice);
+        usdc.approve(address(small), 1_000_000);
+        small.commit(1_000_000);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        usdc.approve(address(small), 1_000_000);
+        small.commit(1_000_000);
+        vm.stopPrank();
+
+        // Third distinct committer is rejected even though target is unfilled.
+        vm.startPrank(carol);
+        usdc.approve(address(small), 1_000_000);
+        vm.expectRevert(abi.encodeWithSelector(ResourcePool.TooManyParticipants.selector, 2));
+        small.commit(1_000_000);
+        vm.stopPrank();
+
+        // Existing participants can still top up under the cap.
+        vm.startPrank(alice);
+        usdc.approve(address(small), 1_000_000);
+        small.commit(1_000_000);
+        vm.stopPrank();
+        assertEq(small.totalCommitted(), 3_000_000);
     }
 }
