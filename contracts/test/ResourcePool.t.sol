@@ -291,6 +291,50 @@ contract ResourcePoolTest is Test {
         pool.commit(0);
     }
 
+    // --- bindAgentId revert coverage --------------------------------------------
+
+    function test_doubleBindReverts() public {
+        _commit(alice, 1_000_000);
+        vm.startPrank(alice);
+        pool.bindAgentId(1);
+        vm.expectRevert(ResourcePool.AlreadyBound.selector);
+        pool.bindAgentId(2);
+        vm.stopPrank();
+    }
+
+    function test_strangerBindReverts() public {
+        _commit(alice, 1_000_000);
+        vm.prank(bob);
+        vm.expectRevert(ResourcePool.NotParticipant.selector);
+        pool.bindAgentId(2);
+    }
+
+    function test_droppedOutBindReverts() public {
+        _commit(alice, 1_000_000);
+        vm.startPrank(alice);
+        pool.dropOut(1);
+        vm.expectRevert(ResourcePool.NotParticipant.selector);
+        pool.bindAgentId(1);
+        vm.stopPrank();
+    }
+
+    function test_bindAfterSettleReverts() public {
+        _commit(alice, TARGET);
+        pool.settle();
+        vm.prank(alice);
+        vm.expectRevert(ResourcePool.PoolSettled.selector);
+        pool.bindAgentId(1);
+    }
+
+    function test_bindAfterFinalizeReverts() public {
+        _commit(alice, 1_000_000);
+        vm.warp(deadline + 1);
+        pool.finalizeExpired();
+        vm.prank(alice);
+        vm.expectRevert(ResourcePool.PoolFinalized.selector);
+        pool.bindAgentId(1);
+    }
+
     // --- Registry failures never brick funds --------------------------------------
 
     function test_reputationRevertDoesNotBrickSettle() public {

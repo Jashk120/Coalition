@@ -67,6 +67,9 @@ contract ResourcePool {
     bool private _locked;
 
     event Committed(address indexed agent, uint256 amount);
+    /// @notice Funds left the pool. Fires on `settle` (threshold met) AND on the
+    /// `finalizeExpired` all-dropped sweep below — subgraph mappings must treat it
+    /// as "funds left", not "threshold met".
     event Settled(uint256 total);
     event Refunded(address indexed agent, uint256 amount);
     event DroppedOut(address indexed agent, uint256 forfeited);
@@ -131,7 +134,11 @@ contract ResourcePool {
 
     /// @notice Associate the caller's ERC-8004 agent id for `completion` feedback on settle.
     /// @dev Self-binding only: there is no way to bind another address, so no auth list is needed.
+    /// Gated after terminal states like every other state-changing function —
+    /// nothing reads bindings post-terminal, so late binds would be dead state motion.
     function bindAgentId(uint256 agentId) external {
+        if (settled) revert PoolSettled();
+        if (_expiredFinalized) revert PoolFinalized();
         if (!_isParticipant[msg.sender] || droppedOut[msg.sender]) revert NotParticipant();
         if (hasAgentId[msg.sender]) revert AlreadyBound();
         agentIdOf[msg.sender] = agentId;
@@ -159,6 +166,14 @@ contract ResourcePool {
 
     /// @notice Settle a filled pool: entire balance goes to `provider` atomically.
     /// @dev Open to any caller once `totalCommitted >= target`; funds can only flow to `provider`.
+    /// KNOWN LIMITATION (testnet-acceptable, mainnet-blocking): the completion-feedback
+    /// loop below is O(n) over an unbounded participant array, and `finalizeExpired`
+    /// additionally pushes one USDC transfer per participant in-loop. At demo scale
+    /// (single-digit agents) this is fine; at hundreds of agents either call can
+    /// exceed block gas and brick funds with no recovery path, and a malicious
+    /// participant contract with an expensive fallback can grief the whole refund.
+    /// Before anything mainnet-adjacent: switch to pull-pattern withdrawals or
+    /// paginated settlement. No participant cap is enforced — keep demo pools small.
     function settle() external nonReentrant {
         if (settled) revert PoolSettled();
         if (_expiredFinalized) revert PoolFinalized();

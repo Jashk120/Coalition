@@ -54,6 +54,8 @@ Foundry artifact once `contracts/` lands.
 Pool side: `Pool` (id, creator, stake, state, createdAt/updatedAt) +
 immutable `Commitment`, `Settlement`, `Refund`, `Dropout`, `Completion`
 (tx-hash+logIndex ids, amounts as `BigInt`, `@derivedFrom` back to pool).
+Map `Settled` as "funds left the pool", NOT "threshold met" — it also fires
+on the `finalizeExpired` all-dropped sweep to `provider`.
 ERC-8004 side: `Agent` (id, owner, agentURI) + immutable `Feedback`
 (value `BigInt` — `int128` overflows `Int`/`Int8`; `valueDecimals` as `Int`;
 `feedbackIndex: uint64` as `BigInt`; store un-indexed `tag1`/`tag2`, never the
