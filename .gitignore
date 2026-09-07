@@ -6,6 +6,10 @@ node_modules/
 dist/
 coverage/
 
+# Foundry build output (commit src/test/script + foundry.lock, never these)
+contracts/out/
+contracts/cache/
+
 # Environment and logs
 .env
 .env.*
