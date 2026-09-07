@@ -1,0 +1,101 @@
+# ENSv2 — Stack and Heavy Usage
+
+Verified 2026-09-07 against docs.ens.domains/ensv2, `ensdomains/contracts-v2`,
+npm. **Everything below is beta on Sepolia: interfaces not final, addresses
+rotate — re-fetch the Deployments table before Day 8 and at demo time.**
+
+## 1. Stack + versions
+
+| Piece | Pin | Role |
+|---|---|---|
+| `viem` | `>= 2.35.0` | Reads (`getEnsAddress/Text/Resolver`), all writes via `writeContract` + `multicall` |
+| `@ensdomains/ensjs` | `4.2.3` stable (reads) | `getAddressRecord`, `getRecords`; only lib with write helpers (`setRecords`, `setAddressRecord`) |
+| `@ensdomains/ensjs` | `5.0.0-alpha` (preview) | v2 writes: `/public/v2`, `/wallet/v2`, `/utils/v2`, `@ensdomains/ensjs-abi/v2/*` |
+| `ensdomains/contracts-v2` | Sepolia beta | Registry, resolver, factory, registrar sources of truth |
+
+No namehash change: `normalize`/`namehash`/`packetToBytes` from `viem/ens` work
+unchanged. What changed is *where* you call (resolver looked up fresh per
+write, never cached) and *who may call* (EAC roles). Token IDs are **mutable**
+— key caches by **labelhash**, resolve `findTokenId` at tx time.
+
+Key docs: app-dev tutorial, contract-dev tutorial (full subname-registrar
+build), registry-hierarchy, enhanced-access-control, permissioned-registry,
+permissioned-resolver, universal-resolver-v2, verifiable-factory,
+eth-registrar (`docs.ens.domains/ensv2/*`).
+
+## 2. Sepolia addresses — re-fetch, do not hardcode
+
+Source of truth: `docs.ens.domains/learn/deployments/#sepolia-ensv2-beta` +
+`contracts/deployments/sepolia/*.json`. Rotation already observed between docs
+pin and repo HEAD. Stable proxy (use via library): UniversalResolver
+`0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe`.
+
+| Contract | Beta-table value (re-check) |
+|---|---|
+| `ETHRegistry` (`.eth`) | `0xbdc85dd5b15d7ecb354cd7cb6f2c50b4f2c4f0e2` |
+| `ETHRegistrar` | `0xa88553f454b77203b0d036a05c894d555eaaa2cc` |
+| `RootRegistry` | `0x8115186e8f2e0b0281e86ab91f0f48ba90364354` |
+| `PermissionedResolverImpl` | `0x9eae5c2730a7dd16bdd1dee6421a1b91e3b0365e` |
+| `UserRegistryImpl` | `0x624a25d67b59d587752ebec8dded8827dae52050` |
+| `VerifiableFactory` | rotated already — re-fetch |
+| `MockUSDC` (mintable, 6 dec) | rotated already — re-fetch |
+
+Beta facts: clean Beta registry (Alpha names wiped), `MockUSDC.mint` open +
+`approve`-before-`register`, 28-day grace, MockUSDC/testnet-USDC fees only,
+experimental-software notice.
+
+## 3. Heavy usage per piece (our discovery flow)
+
+**Reads — always via Universal Resolver, never direct.** `getEnsAddress({ name,
+coinType })`, `getEnsResolver({ name })` on a Sepolia viem client (resolution
+starts on L1 even though wallets live on Arc). Subname with no resolver
+inherits the parent's via longest-suffix match — registration alone can be
+enough to resolve.
+
+**Registry — own subname registry for `agentpool.eth`.** Deploy `UserRegistry`
+proxy via factory (`deployProxy` + salt `keccak256("UserRegistry",
+namehash(parent), version)` → `ProxyDeployed` gives address), `initialize`
+with root roles, `setSubregistry` on the parent, `grantRootRoles` to the
+registrar. Per-agent: `register(label, owner, registry, resolver, roleBitmap,
+expiry)` — bitmap `SET_SUBREGISTRY(+ADMIN) | SET_RESOLVER(+ADMIN) |
+CAN_TRANSFER_ADMIN`; drop the last for non-transferable, short `expiry` +
+kept `ROLE_RENEW` for expiring, `unregister` for revocable.
+
+**Arc address records — `coinType = 2152525650`.** ENSIP-9/11 multicoin:
+`setAddr(node, coinType, bytes)` with `coinType = 0x80000000 | 5042002`
+(`toCoinType(5042002)`). Same `0x` bytes as EVM — the coinType disambiguates.
+Reads: `getEnsAddress({ name: "agent1.agentpool.eth", coinType: 2152525650 })`.
+
+**EAC — per-agent least privilege.** `authorizeAddrRoles(dnsName, coinType,
+agentWallet, true)` (+ optional single-key `authorizeTextRoles`) so each agent
+writes only its own Arc record; revoke with `false`. Registry side:
+`ROLE_REGISTRAR | ROLE_RENEW` for the registrar. Lock forever by revoking role
+*and* admin from self (irreversible).
+
+**Fallbacks, not primaries.** Resolver `setAlias` record-sharing and wildcard
+`IExtendedResolver.resolve` stay in reserve; namespace aliasing (two names →
+same subregistry) only if the demo needs a second parent.
+
+## 4. Resolution flow (the scored path)
+
+`agent1.agentpool.eth` → Sepolia UR → Arc wallet (`coinType 2152525650`) →
+`findAgentsByOwner` (indexed `owner` on `Registered` logs — zero gas, no
+Enumerable in ERC-8004 to lean on) → ERC-8004 `resolveAgent` +
+`getReputationSummary`. The ENS↔ERC-8004 hop is our own composition (no
+official doc blesses it) — valid, and exactly the
+"agents as namespaces with own identity and permissions" bonus the bounty names.
+
+Pool member enumeration follows the same split: the contract records members
+at commit time (one SSTORE inside an already-paid commit — cheapest possible
+on-chain enumeration, spec'd for `contracts/`), reads stay free, and the
+subgraph's `Commitment` entities serve discovery queries. No Enumerable-style
+add-on anywhere: reads are free, writes pay once.
+
+## 5. `sdk/ens/` shape (when built)
+
+Thin wrapper over viem + direct calls (reads stable, writes beta): wrap
+`getEnsAddress({coinType})`, `getEnsResolver`, `setAddr`,
+`authorizeAddrRoles`, factory `deployProxy` + `register`; labelhash-keyed
+caching, fresh resolver lookup per write, Sepolia client for ENS even though
+wallets are Arc. Mocked-transport tests like the other modules. No `ethers`,
+no hardcoded resolver addresses.
