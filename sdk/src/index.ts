@@ -13,5 +13,6 @@ export function coalitionSdk(): string {
 
 export * from "./chains/index.js";
 export * from "./identity/index.js";
+export * from "./market/index.js";
 export * from "./pool/index.js";
 export * from "./reputation/index.js";
