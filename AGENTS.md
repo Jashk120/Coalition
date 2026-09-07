@@ -35,6 +35,9 @@
 - Before each commit, inspect `git status`, `git diff`, and `git log --oneline -5`;
   stage only intended files. Never commit secrets, generated output
   (`dist/`, `node_modules/`), or another contributor's work.
+- Always include Markdown files (`.md`) in commits — docs ship with the
+  change, never left untracked. The only exception is paths matched by
+  `.gitignore`.
 - Write short imperative commit messages, for example: `Add health check endpoint`.
 
 - Never use destructive Git commands or rewrite shared history without explicit approval.
