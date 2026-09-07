@@ -12,3 +12,4 @@ export function coalitionSdk(): string {
 }
 
 export * from "./chains/index.js";
+export * from "./identity/index.js";
