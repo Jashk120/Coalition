@@ -49,7 +49,6 @@ const entry = await readFeedback({ publicClient, agentId, clientAddress: client,
 ```
 
 ## Pool — resource pool (custom contract)
-
 ```ts
 import { commitToPool, getPoolState, wouldExceedTarget } from "@jx-nexus/coalition";
 
@@ -63,6 +62,39 @@ if (!wouldExceedTarget(state, toAtomicUsdc("2"))) {
 > **Generated ABI.** `src/pool/abi.ts` is synced from
 > `contracts/out/ResourcePool.sol/ResourcePool.json` — regenerate (never
 > hand-edit) via `(cd contracts && forge build) && node sdk/scripts/sync-pool-abi.mjs`.
+
+## ENS — ENSv2 subnames on Sepolia (beta)
+
+```ts
+import { createPublicClient, http } from "viem";
+import { sepolia } from "viem/chains";
+import { resolveArcWallet, resolveEnsToAgents } from "@jx-nexus/coalition";
+
+const sepoliaClient = createPublicClient({ chain: sepolia, transport: http() });
+const arcWallet = await resolveArcWallet({ publicClient: sepoliaClient, name: "agent1.agentpool.eth" });
+
+// Scored path: subname → Arc wallet → ERC-8004 agent ids (free log reads)
+const resolved = await resolveEnsToAgents({ sepoliaClient, arcClient: publicClient, name: "agent1.agentpool.eth" });
+```
+
+Writes look the resolver up fresh every call (never cached) and need a
+Sepolia wallet client:
+
+```ts
+import { authorizeAgentRecord, registerSubname, setArcAddressRecord } from "@jx-nexus/coalition";
+
+await registerSubname({ walletClient, account, registrar, label: "agent1", owner, registry, resolver, roleBitmap, expiry });
+await authorizeAgentRecord({ walletClient, account, name: "agent1.agentpool.eth", resolver, agentWallet, allowed: true });
+await setArcAddressRecord({ walletClient, publicClient: sepoliaClient, account, name: "agent1.agentpool.eth", arcWallet });
+```
+
+> **Beta caveats.** ENSv2 is beta on Sepolia: interfaces are not final and
+> addresses rotate — re-fetch the Deployments table
+> (`docs.ens.domains/learn/deployments/#sepolia-ensv2-beta`) before Day 8
+> and at demo time. Every address in `src/ens/addresses.ts` is overridable
+> per call; `VerifiableFactory` has no default (it already rotated once).
+> Write ABIs in `src/ens/abi.ts` must be verified against
+> `ensdomains/contracts-v2` HEAD before the demo.
 
 ## Development
 
