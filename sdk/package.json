@@ -1,5 +1,5 @@
 {
-  "name": "@coalition/sdk",
+  "name": "@jx-nexus/coalition",
   "version": "0.1.0",
   "description": "TypeScript SDK for Coalition.",
   "license": "MIT",
@@ -20,9 +20,15 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "check": "tsc --noEmit --project tsconfig.json"
+    "check": "tsc --noEmit --project tsconfig.json",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "@vitest/coverage-v8": "^5.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.0"
+  },
+  "dependencies": {
+    "viem": "^2.56.3"
   }
 }
