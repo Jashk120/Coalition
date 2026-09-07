@@ -48,3 +48,5 @@
 - Communicate progress concisely, including blockers and decisions that need input.
 - Ask before actions that are destructive, irreversible, externally visible, or meaningfully broaden scope.
 - Leave the repository in a clean, understandable state for the next person.
+- Once a task is done, stop and wait for the user to review and approve before committing or moving on to the next task.
+- Present completed work for review with a short summary of what changed and how it was validated.
