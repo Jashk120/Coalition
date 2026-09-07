@@ -8,5 +8,7 @@ export const VERSION = "0.1.0";
  * the rest of the SDK is developed.
  */
 export function coalitionSdk(): string {
-  return `coalition-sdk/${VERSION}`;
+  return `@jx-nexus/coalition/${VERSION}`;
 }
+
+export * from "./chains/index.js";
