@@ -4,7 +4,7 @@ A TypeScript SDK for Coalition.
 
 ## Repository layout
 
-- `sdk/` — the `@coalition/sdk` TypeScript package
+- `sdk/` — the `@jx-nexus/coalition` TypeScript package
 
 ## Requirements
 
