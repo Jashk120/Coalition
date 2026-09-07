@@ -104,3 +104,34 @@ export async function resolveAgent(
   ]);
   return { agentURI, wallet };
 }
+
+export type FindAgentsByOwnerParams = {
+  readonly publicClient: PublicClient;
+  readonly owner: Address;
+  readonly registry?: Address;
+  /** First block to scan. Defaults to genesis — pass the registry deploy block on busy chains. */
+  readonly fromBlock?: bigint;
+};
+
+/**
+ * Find agent ids owned by a wallet. ERC-8004 has no on-chain reverse lookup
+ * (no Enumerable, no lookup-by-address in the spec), so this filters the
+ * indexed `owner` on `Registered` logs instead. Pure off-chain log reads —
+ * zero gas. Closes the ENS → wallet → id hop.
+ */
+export async function findAgentsByOwner(
+  params: FindAgentsByOwnerParams,
+): Promise<readonly AgentId[]> {
+  const registry = params.registry ?? DEFAULT_IDENTITY_REGISTRY;
+  const logs = await params.publicClient.getContractEvents({
+    address: registry,
+    abi: identityRegistryAbi,
+    eventName: "Registered",
+    args: { owner: params.owner },
+    fromBlock: params.fromBlock ?? 0n,
+  });
+  return logs
+    .map((log) => log.args.agentId)
+    .filter((agentId): agentId is bigint => agentId !== undefined)
+    .map((agentId) => AgentId(agentId));
+}
