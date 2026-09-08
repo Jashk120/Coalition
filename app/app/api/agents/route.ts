@@ -5,7 +5,7 @@ import {
   resolveSeedAgents,
 } from "@jx-nexus/coalition";
 import { arcPublicClient, sepoliaPublicClient } from "@/lib/chain";
-import { CHAIN_ID, OUTSIDE_BUYER, POOL_ADDRESS, SEED_META } from "@/lib/constants";
+import { CHAIN_ID, IDENTITY_REGISTRY_FROM_BLOCK, OUTSIDE_BUYER, POOL_ADDRESS, SEED_META } from "@/lib/constants";
 import { log, logTimed } from "@/lib/logger";
 import { readPoolState } from "@/lib/pool-state";
 import type { AgentsResponse, ResolutionView } from "@/lib/types";
@@ -56,6 +56,7 @@ export async function GET(): Promise<NextResponse<AgentsResponse>> {
             arcClient: arcPublicClient(),
             seeds: DEMO_SEED_AGENTS,
             reviewers,
+            fromBlock: IDENTITY_REGISTRY_FROM_BLOCK,
           }),
           25_000,
           "resolveSeedAgents",

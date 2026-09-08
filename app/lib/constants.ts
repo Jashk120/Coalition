@@ -14,6 +14,18 @@ export const CHAIN_ID = Number(
   process.env["NEXT_PUBLIC_CHAIN_ID"] ?? "5042002",
 );
 
+/**
+ * First Arc block carrying IdentityRegistry code. The wallet → agent-id
+ * `Registered` log scan starts here because the public Arc RPC serves pruned
+ * history and rejects genesis scans. Override via
+ * `IDENTITY_REGISTRY_FROM_BLOCK` (server env) if the registry redeploys.
+ */
+export const IDENTITY_REGISTRY_FROM_BLOCK: bigint = (() => {
+  const raw = process.env["IDENTITY_REGISTRY_FROM_BLOCK"];
+  if (raw !== undefined && raw !== "" && /^\d+$/.test(raw)) return BigInt(raw);
+  return 29241340n;
+})();
+
 /** Funding target: 10.00 USDC in 6-decimal atomic units. */
 export const TARGET_ATOMIC = 10000000n;
 

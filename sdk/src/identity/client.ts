@@ -118,20 +118,40 @@ export type FindAgentsByOwnerParams = {
  * (no Enumerable, no lookup-by-address in the spec), so this filters the
  * indexed `owner` on `Registered` logs instead. Pure off-chain log reads —
  * zero gas. Closes the ENS → wallet → id hop.
+ *
+ * Two guards for range-capped RPCs (Arc testnet rejects ranges over ~10k
+ * blocks): a `balanceOf` fast path returns `[]` without any log call when
+ * the wallet owns nothing, and the remaining scan runs in 10k-block chunks.
  */
 export async function findAgentsByOwner(
   params: FindAgentsByOwnerParams,
 ): Promise<readonly AgentId[]> {
   const registry = params.registry ?? DEFAULT_IDENTITY_REGISTRY;
-  const logs = await params.publicClient.getContractEvents({
+  const balance = await params.publicClient.readContract({
     address: registry,
     abi: identityRegistryAbi,
-    eventName: "Registered",
-    args: { owner: params.owner },
-    fromBlock: params.fromBlock ?? 0n,
+    functionName: "balanceOf",
+    args: [params.owner],
   });
-  return logs
-    .map((log) => log.args.agentId)
-    .filter((agentId): agentId is bigint => agentId !== undefined)
-    .map((agentId) => AgentId(agentId));
+  if (balance === 0n) return [];
+  const latest = await params.publicClient.getBlockNumber();
+  const start = params.fromBlock ?? 0n;
+  const ids: AgentId[] = [];
+  for (let cursor = start; cursor <= latest; ) {
+    const end = cursor + 10_000n > latest ? latest : cursor + 10_000n;
+    const logs = await params.publicClient.getContractEvents({
+      address: registry,
+      abi: identityRegistryAbi,
+      eventName: "Registered",
+      args: { owner: params.owner },
+      fromBlock: cursor,
+      toBlock: end,
+    });
+    for (const log of logs) {
+      if (log.args.agentId !== undefined) ids.push(AgentId(log.args.agentId));
+    }
+    if (end === latest) break;
+    cursor = end + 1n;
+  }
+  return ids;
 }

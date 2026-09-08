@@ -41,13 +41,22 @@ describe("findAgentsByOwner", () => {
     seenMethods = [];
   });
 
-  function clientWithLogs(logs: ReturnType<typeof registeredLog>[]) {
+  function clientWithLogs(
+    logs: ReturnType<typeof registeredLog>[],
+    balance = BigInt(logs.length),
+  ) {
+    const balanceData = encodeAbiParameters(
+      parseAbiParameters("uint256 balance"),
+      [balance],
+    );
     return createPublicClient({
       chain: ARC_TESTNET,
       transport: custom({
         request: async ({ method }) => {
           seenMethods.push(method);
           if (method === "eth_chainId") return "0x4cef52";
+          if (method === "eth_call") return balanceData;
+          if (method === "eth_blockNumber") return "0x100";
           expect(method).toBe("eth_getLogs");
           return logs;
         },
@@ -67,7 +76,7 @@ describe("findAgentsByOwner", () => {
 
     // Then: both ids, and no transaction was ever sent
     expect(ids).toEqual([AgentId(7n), AgentId(13n)]);
-    expect(seenMethods).toEqual(["eth_getLogs"]);
+    expect(seenMethods).toEqual(["eth_call", "eth_blockNumber", "eth_getLogs"]);
   });
 
   it("returns empty when the wallet owns nothing", async () => {

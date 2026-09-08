@@ -35,6 +35,13 @@ export const identityRegistryAbi = [
   },
   {
     type: "function",
+    name: "balanceOf",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
     name: "tokenURI",
     inputs: [{ name: "agentId", type: "uint256" }],
     outputs: [{ name: "", type: "string" }],

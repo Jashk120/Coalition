@@ -30,6 +30,12 @@ export type ResolveSeedAgentsParams = {
   readonly identityRegistry?: Address;
   readonly reputationRegistry?: Address;
   /**
+   * First block of the wallet → agent-id `Registered` log scan. Defaults to
+   * genesis — pass the registry deploy block on RPCs with pruned history
+   * (e.g. Arc testnet public RPC rejects `fromBlock: 0`).
+   */
+  readonly fromBlock?: bigint;
+  /**
    * Feedback indices scanned per reviewer when hunting dropout tags.
    * Defaults to 3. A revert/miss ends that reviewer's scan — later indices
    * are assumed absent, never a crash.
@@ -114,6 +120,7 @@ export async function resolveSeedAgent(
     ...(params.identityRegistry === undefined
       ? {}
       : { identityRegistry: params.identityRegistry }),
+    ...(params.fromBlock === undefined ? {} : { fromBlock: params.fromBlock }),
   });
   if (resolved === null) {
     return {
@@ -212,6 +219,9 @@ export async function resolveSeedAgents(
         ...(params.reputationRegistry === undefined
           ? {}
           : { reputationRegistry: params.reputationRegistry }),
+        ...(params.fromBlock === undefined
+          ? {}
+          : { fromBlock: params.fromBlock }),
         ...(params.maxFeedbackPerClient === undefined
           ? {}
           : { maxFeedbackPerClient: params.maxFeedbackPerClient }),

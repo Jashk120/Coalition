@@ -31,6 +31,7 @@ const ARC_CHAIN_ID = "0x4cef52";
 
 const TOKEN_URI_SELECTOR = toFunctionSelector("tokenURI(uint256)");
 const AGENT_WALLET_SELECTOR = toFunctionSelector("getAgentWallet(uint256)");
+const BALANCE_OF_SELECTOR = toFunctionSelector("balanceOf(address)");
 const GET_SUMMARY_SELECTOR = toFunctionSelector(
   "getSummary(uint256,address[],string,string)",
 );
@@ -106,11 +107,18 @@ function arcClientMock(opts: {
     transport: custom({
       request: async ({ method, params }) => {
         if (method === "eth_chainId") return ARC_CHAIN_ID;
+        if (method === "eth_blockNumber") return "0x100";
         if (method === "eth_getLogs") {
           return opts.agentIds.map((id) => registeredLog(id, opts.owner));
         }
         expect(method).toBe("eth_call");
         const data = (params as [{ readonly data: `0x${string}` }])[0].data;
+        if (data.startsWith(BALANCE_OF_SELECTOR)) {
+          return encodeAbiParameters(
+            [{ type: "uint256" }],
+            [BigInt(opts.agentIds.length)],
+          );
+        }
         if (data.startsWith(AGENT_WALLET_SELECTOR)) {
           return encodeAbiParameters([{ type: "address" }], [opts.owner]);
         }

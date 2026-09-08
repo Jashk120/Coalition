@@ -257,6 +257,12 @@ export type ResolveEnsToAgentsParams = {
   readonly name: string;
   readonly coinType?: number;
   readonly identityRegistry?: Address;
+  /**
+   * First block of the wallet → agent-id `Registered` log scan. Defaults to
+   * genesis — pass the registry deploy block on RPCs with pruned history
+   * (e.g. Arc testnet public RPC rejects `fromBlock: 0`).
+   */
+  readonly fromBlock?: bigint;
 };
 
 /**
@@ -280,6 +286,7 @@ export async function resolveEnsToAgents(
     ...(params.identityRegistry === undefined
       ? {}
       : { registry: params.identityRegistry }),
+    ...(params.fromBlock === undefined ? {} : { fromBlock: params.fromBlock }),
   });
   return { arcWallet, agentIds };
 }

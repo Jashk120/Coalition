@@ -395,6 +395,12 @@ describe("resolveEnsToAgents", () => {
       transport: custom({
         request: async ({ method }) => {
           if (method === "eth_chainId") return ARC_CHAIN_ID;
+          if (method === "eth_blockNumber") return "0x100";
+          if (method === "eth_call") {
+            return encodeAbiParameters(parseAbiParameters("uint256 balance"), [
+              1n,
+            ]);
+          }
           expect(method).toBe("eth_getLogs");
           return [registeredLog(pad("0x07"))];
         },
