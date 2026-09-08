@@ -8,6 +8,8 @@ But equal payment doesn't mean equal usage — agent A might pay $2 for 1GB whil
 
 - `sdk/` — the `@jx-nexus/coalition` TypeScript package
   (`chains/`, `identity/`, `reputation/`, `pool/`, plus `test/`)
+- `app/` — Next.js dashboard for the 4-agent pool flow (dogfoods the SDK via
+  `file:../sdk`; reads + dry-run decisions only, no on-chain writes)
 - `plans/` — implementation plans
 
 ## Requirements
@@ -16,13 +18,24 @@ But equal payment doesn't mean equal usage — agent A might pay $2 for 1GB whil
 
 ## Development
 
-All commands run inside `sdk/` (the repo root has no manifest):
+All SDK commands run inside `sdk/` (the repo root has no manifest):
 
 ```sh
 npm install --prefix sdk
 npm run check --prefix sdk
 npm run build --prefix sdk
 npm test --prefix sdk
+```
+
+Dashboard commands run inside `app/` (rebuild the SDK first so the local
+`file:../sdk` dependency picks up the latest published surface):
+
+```sh
+npm run build --prefix sdk
+npm install --prefix app
+npm run check --prefix app
+npm run build --prefix app
+npm run dev --prefix app
 ```
 
 See [`sdk/README.md`](sdk/README.md) for SDK-specific details.
