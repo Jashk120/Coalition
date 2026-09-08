@@ -22,6 +22,9 @@ import (
 var (
 	// ErrMissingProvider is returned when PROVIDER_ADDRESS is empty.
 	ErrMissingProvider = errors.New("config: PROVIDER_ADDRESS is required")
+	// ErrMissingAppKey is returned when APP_API_KEY is empty without the
+	// ALLOW_NO_APP_AUTH=1 dev escape hatch.
+	ErrMissingAppKey = errors.New("config: APP_API_KEY is required (or ALLOW_NO_APP_AUTH=1 for dev)")
 	// ErrInvalidValue wraps every malformed env value.
 	ErrInvalidValue = errors.New("config: invalid value")
 )
@@ -49,6 +52,8 @@ type Config struct {
 	PublicBaseURL   string
 	TrustProxy      bool
 	RequireDocker   bool
+	AppAPIKey       string
+	AllowNoAppAuth  bool
 }
 
 // WindowSeconds returns the compute window in seconds.
@@ -201,6 +206,17 @@ func loadFrom(lookup func(string) (string, bool)) (Config, error) {
 
 	cfg.TrustProxy = parseBoolEnv(get("TRUST_PROXY", ""))
 	cfg.RequireDocker = parseBoolEnv(get("REQUIRE_DOCKER", ""))
+	cfg.AllowNoAppAuth = parseBoolEnv(get("ALLOW_NO_APP_AUTH", ""))
+
+	keyRaw := strings.TrimSpace(get("APP_API_KEY", ""))
+	if keyRaw == "" {
+		if !cfg.AllowNoAppAuth {
+			return Config{}, ErrMissingAppKey
+		}
+	} else if len(keyRaw) < 16 {
+		return Config{}, fmt.Errorf("APP_API_KEY too short (%d chars, want >=16): %w", len(keyRaw), ErrInvalidValue)
+	}
+	cfg.AppAPIKey = keyRaw
 
 	baseRaw := strings.TrimSpace(get("PUBLIC_BASE_URL", ""))
 	if baseRaw != "" {

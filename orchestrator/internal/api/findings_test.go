@@ -185,7 +185,7 @@ func (b failBackend) CreateContainer(_ context.Context, _ string, _ backend.Limi
 func Test_Allocate_rollback_on_backend_failure(t *testing.T) {
 	f := newFixture()
 	f.srv.backend = failBackend{ContainerBackend: f.be, failCreate: true}
-	rec := doRequest(f, http.MethodPost, "/allocate",
+	rec := doAppKey(f, http.MethodPost, "/allocate",
 		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":800}`)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s, want 500", rec.Code, rec.Body.String())
@@ -197,8 +197,8 @@ func Test_Allocate_rollback_on_backend_failure(t *testing.T) {
 	f2 := newFixture()
 	allocate(t, f2, testWalletA, 0.2, 800)
 	f2.srv.backend = failBackend{ContainerBackend: f2.be, failCreate: true}
-	rec = doAuthed(f2, http.MethodPost, "/allocate",
-		`{"wallet":"`+testWalletA+`","cpu":0.5,"mem":1000}`, testWalletA)
+	rec = doAppKey(f2, http.MethodPost, "/allocate",
+		`{"wallet":"`+testWalletA+`","cpu":0.5,"mem":1000}`)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s, want 500", rec.Code, rec.Body.String())
 	}
@@ -217,8 +217,8 @@ func Test_Allocate_shrink_below_usage_rejected(t *testing.T) {
 	if err := f.led.AddUsage(mustWallet(t, testWalletA), 0.2*72*3600, 0); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
-	rec := doAuthed(f, http.MethodPost, "/allocate",
-		`{"wallet":"`+testWalletA+`","cpu":0.1,"mem":400}`, testWalletA)
+	rec := doAppKey(f, http.MethodPost, "/allocate",
+		`{"wallet":"`+testWalletA+`","cpu":0.1,"mem":400}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("shrink: status=%d body=%s, want 409", rec.Code, rec.Body.String())
 	}
@@ -259,7 +259,7 @@ func Test_Pool_closed_gate(t *testing.T) {
 	allocate(t, f, testWalletA, 0.2, 800)
 	stub.views = &settle.PoolViews{Settled: false, Expired: true, TotalCommitted: big.NewInt(1)}
 
-	rec := doRequest(f, http.MethodPost, "/allocate",
+	rec := doAppKey(f, http.MethodPost, "/allocate",
 		`{"wallet":"`+testWalletB+`","cpu":0.1,"mem":100}`)
 	if rec.Code != http.StatusConflict || codeOf(t, rec.Body.Bytes()) != "pool_closed" {
 		t.Fatalf("allocate on expired pool: status=%d body=%s, want 409 pool_closed", rec.Code, rec.Body.String())

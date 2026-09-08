@@ -46,10 +46,6 @@ func (s *Server) handleAllocate(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, s.logger, poolSettled("pool settled: allocations are final"))
 		return
 	}
-	known := s.ledger.HasWallet(wallet)
-	if known && !s.authenticateWallet(w, wallet, r) {
-		return
-	}
 	if err := s.rejectShrink(wallet, ent); err != nil {
 		writeJSONError(w, s.logger, err)
 		return

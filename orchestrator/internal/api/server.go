@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,13 +31,15 @@ const maxBodyBytes = 1 << 20
 // Server wires config, ledger, and backend to HTTP routes. No global state:
 // construct via NewServer.
 type Server struct {
-	cfg      config.Config
-	ledger   *store.Store
-	backend  backend.ContainerBackend
-	logger   *slog.Logger
-	mux      *http.ServeMux
-	verifier receiptVerifier
-	limiter  *ipLimiter
+	cfg         config.Config
+	ledger      *store.Store
+	backend     backend.ContainerBackend
+	logger      *slog.Logger
+	mux         *http.ServeMux
+	verifier    receiptVerifier
+	limiter     *ipLimiter
+	appKeyHash  [32]byte
+	appAuthOpen bool
 }
 
 // NewServer builds the router. Invalid limiter params are a hard error, not
@@ -47,15 +51,17 @@ func NewServer(cfg config.Config, ledger *store.Store, be backend.ContainerBacke
 		return nil, err
 	}
 	s := &Server{
-		cfg:      cfg,
-		ledger:   ledger,
-		backend:  be,
-		logger:   logger,
-		mux:      http.NewServeMux(),
-		verifier: settle.NewClient(cfg.RPCURL),
-		limiter:  limiter,
+		cfg:         cfg,
+		ledger:      ledger,
+		backend:     be,
+		logger:      logger,
+		mux:         http.NewServeMux(),
+		verifier:    settle.NewClient(cfg.RPCURL),
+		limiter:     limiter,
+		appKeyHash:  sha256.Sum256([]byte(cfg.AppAPIKey)),
+		appAuthOpen: cfg.AllowNoAppAuth && cfg.AppAPIKey == "",
 	}
-	s.mux.HandleFunc("POST /allocate", s.handleAllocate)
+	s.mux.HandleFunc("POST /allocate", s.requireAppKey(s.handleAllocate))
 	s.mux.HandleFunc("POST /run", s.handleRun)
 	s.mux.HandleFunc("GET /terms.json", s.handleTerms)
 	s.mux.HandleFunc("GET /quote", s.handleQuote)
@@ -67,6 +73,43 @@ func NewServer(cfg config.Config, ledger *store.Store, be backend.ContainerBacke
 // SetVerifier swaps the receipt verifier; tests inject a fake, production
 // keeps the *settle.Client built from RPC_URL.
 func (s *Server) SetVerifier(v receiptVerifier) { s.verifier = v }
+
+// appKeyHeader carries the operator app key. It is deliberately NOT the
+// Authorization: Bearer scheme: that header belongs to agent tokens, and the
+// two tiers must never be confusable at the parsing layer.
+const appKeyHeader = "X-App-Key"
+
+// requireAppKey enforces the operator tier in the router, not per-handler:
+// POST /allocate mints quota plus agent tokens (a privilege grant), so only
+// the operator app may call it — agents must not self-provision.
+//
+// Why a shared key instead of the usual alternatives: no IP allowlisting —
+// the Next app's egress location is unknown (Vercel/VPS IPs are dynamic and
+// brittle, so an allowlist would either break deploys or rot into 0.0.0.0/0),
+// and key-based auth is location-independent. No mTLS yet — worth adding once
+// the app host is fixed and stable, since client certs then give per-caller
+// identity without shared-secret rotation pain; until then the app key is
+// the whole operator boundary, so it must be long, random, and rotated on
+// any suspected leak.
+func (s *Server) requireAppKey(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.appAuthOpen {
+			next(w, r)
+			return
+		}
+		presented := r.Header.Get(appKeyHeader)
+		if presented == "" {
+			writeJSONError(w, s.logger, unauthorized("operator app key required"))
+			return
+		}
+		sum := sha256.Sum256([]byte(presented))
+		if subtle.ConstantTimeCompare(sum[:], s.appKeyHash[:]) != 1 {
+			writeJSONError(w, s.logger, forbidden("operator app key rejected"))
+			return
+		}
+		next(w, r)
+	}
+}
 
 // Handler exposes the router for httptest, wrapped in body-limit and
 // per-IP rate-limit middleware.

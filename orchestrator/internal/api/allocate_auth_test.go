@@ -22,8 +22,6 @@ const (
 
 func Test_Allocate_token_lifecycle(t *testing.T) {
 	f := newFixture()
-	first := f.tok[testWalletA]
-	_ = first
 	id := allocate(t, f, testWalletA, 0.2, 800)
 	if id == "" {
 		t.Fatal("no container")
@@ -33,19 +31,24 @@ func Test_Allocate_token_lifecycle(t *testing.T) {
 	rec := doRequest(f, http.MethodPost, "/allocate",
 		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":800}`)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("re-allocate without token: status=%d body=%s, want 401", rec.Code, rec.Body.String())
+		t.Fatalf("allocate without app key: status=%d body=%s, want 401", rec.Code, rec.Body.String())
 	}
 	rec = doRequestWith(f, http.MethodPost, "/allocate",
 		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":800}`,
-		map[string]string{"Authorization": "Bearer deadbeef"})
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("re-allocate with wrong token: status=%d, want 401", rec.Code)
+		map[string]string{appKeyHeader: "wrong-key-0123456789abcdef"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("allocate with wrong app key: status=%d, want 403", rec.Code)
 	}
 	rec = doRequestWith(f, http.MethodPost, "/allocate",
 		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":800}`,
 		map[string]string{"Authorization": "Bearer " + good})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("allocate with agent token but no app key: status=%d, want 401", rec.Code)
+	}
+	rec = doAppKey(f, http.MethodPost, "/allocate",
+		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":800}`)
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("re-allocate with token: status=%d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("re-allocate with app key: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var out struct {
 		Token string `json:"token"`
@@ -85,7 +88,7 @@ func Test_Allocate_oversubscription_and_max_agents(t *testing.T) {
 	for _, w := range wallets {
 		allocate(t, f, w, 0.2, 819)
 	}
-	rec := doRequest(f, http.MethodPost, "/allocate",
+	rec := doAppKey(f, http.MethodPost, "/allocate",
 		`{"wallet":"`+testWalletF+`","cpu":0.1,"mem":100}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("6th wallet: status=%d body=%s, want 409", rec.Code, rec.Body.String())
@@ -100,8 +103,8 @@ func Test_Allocate_oversubscription_and_max_agents(t *testing.T) {
 		t.Fatalf("code = %q, want pool_exhausted", errBody.Code)
 	}
 
-	rec = doAuthed(f, http.MethodPost, "/allocate",
-		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":820}`, testWalletA)
+	rec = doAppKey(f, http.MethodPost, "/allocate",
+		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":820}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("existing-wallet top-up: status=%d body=%s, want 201", rec.Code, rec.Body.String())
 	}
@@ -113,8 +116,8 @@ func Test_Allocate_oversubscription_and_max_agents(t *testing.T) {
 	}
 	f.tok[testWalletA] = top.Token
 
-	rec = doAuthed(f, http.MethodPost, "/allocate",
-		`{"wallet":"`+testWalletA+`","cpu":0.9,"mem":820}`, testWalletA)
+	rec = doAppKey(f, http.MethodPost, "/allocate",
+		`{"wallet":"`+testWalletA+`","cpu":0.9,"mem":820}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("oversubscribing resize: status=%d body=%s, want 409", rec.Code, rec.Body.String())
 	}
@@ -124,8 +127,8 @@ func Test_Allocate_rejected_once_settled(t *testing.T) {
 	f := newFixture()
 	allocate(t, f, testWalletA, 0.2, 800)
 	f.led.MarkSettled()
-	rec := doAuthed(f, http.MethodPost, "/allocate",
-		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":800}`, testWalletA)
+	rec := doAppKey(f, http.MethodPost, "/allocate",
+		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":800}`)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("allocate after settle: status=%d body=%s, want 409", rec.Code, rec.Body.String())
 	}
@@ -311,7 +314,7 @@ func Test_Rate_limit_and_body_cap(t *testing.T) {
 
 	f2 := newFixture()
 	big := `{"wallet":"` + testWalletA + `","cpu":0.2,"mem":800,"pad":"` + strings.Repeat("x", 2<<20) + `"}`
-	if rec := doRequest(f2, http.MethodPost, "/allocate", big); rec.Code != http.StatusBadRequest {
+	if rec := doAppKey(f2, http.MethodPost, "/allocate", big); rec.Code != http.StatusBadRequest {
 		t.Fatalf("oversize body: status=%d, want 400", rec.Code)
 	}
 }

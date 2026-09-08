@@ -22,6 +22,7 @@ const (
 	testWalletA  = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
 	testWalletB  = "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
 	testUnknown  = "0x000000000000000000000000000000000000dEaD"
+	testAppKey   = "test-operator-app-key-0123456789abcdef"
 )
 
 type fixture struct {
@@ -51,6 +52,7 @@ func newFixture() fixture {
 		ReaperInterval:  1000000000,
 		RateLimitRPS:    10000,
 		RateLimitBurst:  10000,
+		AppAPIKey:       testAppKey,
 	}
 	be := backend.NewMemoryBackend()
 	led := store.NewStore(cfg.WindowHours)
@@ -91,6 +93,14 @@ func doAuthed(f fixture, method, target, body, wallet string) *httptest.Response
 	})
 }
 
+// doAppKey attaches the operator app key. POST /allocate is operator-tier:
+// it always needs the app key, never an agent token.
+func doAppKey(f fixture, method, target, body string) *httptest.ResponseRecorder {
+	return doRequestWith(f, method, target, body, map[string]string{
+		appKeyHeader: testAppKey,
+	})
+}
+
 func mustWallet(t *testing.T, s string) domain.WalletAddress {
 	t.Helper()
 	w, err := domain.NewWalletAddress(s)
@@ -103,14 +113,7 @@ func mustWallet(t *testing.T, s string) domain.WalletAddress {
 func allocate(t *testing.T, f fixture, wallet string, cpu float64, mem int64) string {
 	t.Helper()
 	body := `{"wallet":"` + wallet + `","cpu":` + floatStr(cpu) + `,"mem":` + intStr(mem) + `}`
-	var rec *httptest.ResponseRecorder
-	if tok := f.tok[wallet]; tok != "" {
-		rec = doRequestWith(f, http.MethodPost, "/allocate", body, map[string]string{
-			"Authorization": "Bearer " + tok,
-		})
-	} else {
-		rec = doRequest(f, http.MethodPost, "/allocate", body)
-	}
+	rec := doAppKey(f, http.MethodPost, "/allocate", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("allocate: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -153,7 +156,7 @@ func Test_Allocate_validation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture()
-			rec := doRequest(f, http.MethodPost, "/allocate", tt.body)
+			rec := doAppKey(f, http.MethodPost, "/allocate", tt.body)
 			if rec.Code != tt.status {
 				t.Fatalf("status=%d body=%s, want %d", rec.Code, rec.Body.String(), tt.status)
 			}

@@ -17,7 +17,10 @@ func lookupOf(env map[string]string) func(string) (string, bool) {
 }
 
 func Test_LoadFrom_defaults_apply(t *testing.T) {
-	cfg, err := loadFrom(lookupOf(map[string]string{"PROVIDER_ADDRESS": testProvider}))
+	cfg, err := loadFrom(lookupOf(map[string]string{
+		"PROVIDER_ADDRESS":  testProvider,
+		"ALLOW_NO_APP_AUTH": "1",
+	}))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -81,6 +84,12 @@ func Test_LoadFrom_defaults_apply(t *testing.T) {
 	if cfg.PollInterval != 5*time.Second {
 		t.Errorf("PollInterval = %v", cfg.PollInterval)
 	}
+	if cfg.AppAPIKey != "" {
+		t.Errorf("AppAPIKey should default empty, got %q", cfg.AppAPIKey)
+	}
+	if !cfg.AllowNoAppAuth {
+		t.Error("AllowNoAppAuth should be true via test env")
+	}
 }
 
 func Test_LoadFrom_missing_provider_fails(t *testing.T) {
@@ -127,10 +136,12 @@ func Test_LoadFrom_bad_values_fail(t *testing.T) {
 		{"rpc garbage", map[string]string{"RPC_URL": "::::"}},
 		{"poll zero", map[string]string{"POLL_INTERVAL": "0s"}},
 		{"poll garbage", map[string]string{"POLL_INTERVAL": "soon"}},
+		{"app key short", map[string]string{"APP_API_KEY": "short"}},
+		{"app key 15 chars", map[string]string{"APP_API_KEY": "123456789012345"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := map[string]string{"PROVIDER_ADDRESS": testProvider}
+			env := map[string]string{"PROVIDER_ADDRESS": testProvider, "ALLOW_NO_APP_AUTH": "1"}
 			for k, v := range tt.env {
 				env[k] = v
 			}
@@ -139,6 +150,42 @@ func Test_LoadFrom_bad_values_fail(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_LoadFrom_app_api_key(t *testing.T) {
+	t.Run("missing without escape hatch fails", func(t *testing.T) {
+		_, err := loadFrom(lookupOf(map[string]string{"PROVIDER_ADDRESS": testProvider}))
+		if !errors.Is(err, ErrMissingAppKey) {
+			t.Fatalf("expected ErrMissingAppKey, got %v", err)
+		}
+	})
+	t.Run("escape hatch allows empty", func(t *testing.T) {
+		cfg, err := loadFrom(lookupOf(map[string]string{
+			"PROVIDER_ADDRESS":  testProvider,
+			"ALLOW_NO_APP_AUTH": "1",
+		}))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if !cfg.AllowNoAppAuth || cfg.AppAPIKey != "" {
+			t.Fatalf("got AllowNoAppAuth=%v AppAPIKey=%q", cfg.AllowNoAppAuth, cfg.AppAPIKey)
+		}
+	})
+	t.Run("16 chars accepted, stored verbatim", func(t *testing.T) {
+		cfg, err := loadFrom(lookupOf(map[string]string{
+			"PROVIDER_ADDRESS": testProvider,
+			"APP_API_KEY":      "0123456789abcdef",
+		}))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if cfg.AppAPIKey != "0123456789abcdef" {
+			t.Fatalf("AppAPIKey = %q", cfg.AppAPIKey)
+		}
+		if cfg.AllowNoAppAuth {
+			t.Error("AllowNoAppAuth should default false")
+		}
+	})
 }
 
 func Test_LoadFrom_insecure_modes_opt_in(t *testing.T) {
@@ -155,6 +202,7 @@ func Test_LoadFrom_insecure_modes_opt_in(t *testing.T) {
 		"REAPER_INTERVAL":           "3s",
 		"RATE_LIMIT_RPS":            "5",
 		"RATE_LIMIT_BURST":          "10",
+		"APP_API_KEY":               "test-operator-app-key-0123456789abcdef",
 	}))
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -177,12 +225,16 @@ func Test_LoadFrom_insecure_modes_opt_in(t *testing.T) {
 	if !cfg.TrustProxy || !cfg.RequireDocker {
 		t.Error("TrustProxy and RequireDocker should be true")
 	}
+	if cfg.AppAPIKey != "test-operator-app-key-0123456789abcdef" {
+		t.Errorf("AppAPIKey = %q", cfg.AppAPIKey)
+	}
 }
 
 func Test_LoadFrom_public_base_url(t *testing.T) {
 	cfg, err := loadFrom(lookupOf(map[string]string{
-		"PROVIDER_ADDRESS": testProvider,
-		"PUBLIC_BASE_URL":  "https://pool.example/",
+		"PROVIDER_ADDRESS":  testProvider,
+		"PUBLIC_BASE_URL":   "https://pool.example/",
+		"ALLOW_NO_APP_AUTH": "1",
 	}))
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -199,7 +251,7 @@ func Test_LoadFrom_public_base_url(t *testing.T) {
 		{"no host", map[string]string{"PUBLIC_BASE_URL": "https://"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			env := map[string]string{"PROVIDER_ADDRESS": testProvider}
+			env := map[string]string{"PROVIDER_ADDRESS": testProvider, "ALLOW_NO_APP_AUTH": "1"}
 			for k, v := range tc.env {
 				env[k] = v
 			}
@@ -213,8 +265,9 @@ func Test_LoadFrom_public_base_url(t *testing.T) {
 func Test_LoadFrom_pool_optional_parses(t *testing.T) {
 	pool := "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 	cfg, err := loadFrom(lookupOf(map[string]string{
-		"PROVIDER_ADDRESS": testProvider,
-		"POOL_ADDRESS":     pool,
+		"PROVIDER_ADDRESS":  testProvider,
+		"POOL_ADDRESS":      pool,
+		"ALLOW_NO_APP_AUTH": "1",
 	}))
 	if err != nil {
 		t.Fatalf("load: %v", err)
