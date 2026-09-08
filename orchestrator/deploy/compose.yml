@@ -1,0 +1,46 @@
+# Coalition orchestrator — VPS deploy stack.
+# Box only pulls: push to main builds ghcr.io/<owner>/Coalition-orchestrator
+# via .github/workflows/orchestrator.yml, Watchtower below auto-updates it.
+# Caddy terminates TLS (required: bearer tokens over http get stolen).
+#
+# Usage on the VPS (~/pool):
+#   cp orchestrator/deploy/.env.example .env   # fill 4 values
+#   IMAGE=ghcr.io/<owner>/coalition-orchestrator:latest docker compose up -d
+#   docker compose logs -f orchestrator
+
+services:
+  orchestrator:
+    image: ${IMAGE:-ghcr.io/jashk120/coalition-orchestrator:latest}
+    env_file:
+      - .env
+    expose:
+      - "8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - orchestrator
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    command: --interval 60 --label-enable --cleanup
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,7 @@
+# Caddy front door for the orchestrator. Copy to ~/pool/Caddyfile and set the
+# domain to your PUBLIC_BASE_URL host (Caddy issues TLS automatically).
+# The orchestrator itself only listens on 127.0.0.1:8080 via compose.
+
+{$DOMAIN} {
+	reverse_proxy orchestrator:8080
+}
