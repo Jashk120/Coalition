@@ -50,6 +50,8 @@ enforcement that is not there.
 | `RATE_LIMIT_BURST` | `40` | no | Per-IP token-bucket capacity. Malformed values are fatal — no silent defaults |
 | `PUBLIC_BASE_URL` | empty (request-derived) | no | Canonical origin (e.g. `https://pool.example`) for `/terms.json` `self` and quote `termsURI`. Empty keeps request-derived behavior gated by `TRUST_PROXY` |
 | `TRUST_PROXY` | empty (ignore) | no | Set `1` to honor `X-Forwarded-Host/Proto` when deriving `termsURI`. Only enable behind a proxy you control that strips client headers — otherwise any client can poison the signed terms URL |
+| `APP_API_KEY` | — | **yes** (unless `ALLOW_NO_APP_AUTH=1`) | Operator app key for `POST /allocate`. Minimum 16 chars enforced at startup (32+ random chars recommended); empty without the escape hatch is fatal |
+| `ALLOW_NO_APP_AUTH` | empty (auth enforced) | no | **Dev-only escape hatch.** Set `1` to boot without `APP_API_KEY` and leave `POST /allocate` unauthenticated. Logs a loud WARN at startup; never enable in production |
 
 Malformed values are fatal at startup, never silently defaulted.
 
@@ -60,15 +62,43 @@ implying a deadline guarantee the service did not enforce. It is deleted
 funding rule is now "atomic settle to provider at threshold; over-commit
 capped at target".
 
-## Auth — opaque bearer tokens
+## Auth — two tiers: operator key vs agent tokens vs public reads
 
-`POST /allocate` returns `{wallet, containerId, token}`. The token is 32
-`crypto/rand` bytes hex-encoded; only its sha256 is stored and comparison uses
-`crypto/subtle`. Token lifecycle:
+Three tiers, enforced in the router (not per-handler), independent — never
+stacked:
 
-- First allocate for a new wallet needs no token; every later call for that
-  wallet (`re-allocate`, `/run`, `/transfer-quota` as sender) requires
-  `Authorization: Bearer <token>`.
+- **Public, no auth** — `GET /healthz`, `GET /terms.json`, `GET /quote`.
+  `terms.json` stays world-readable by design: it is the on-chain
+  `resourceURI` pointer target, so anyone verifying the pool must be able to
+  fetch it. `/quote` stays open because buyers are external agents without
+  tokens — price discovery must work before anyone holds credentials.
+- **Operator, app key** — `POST /allocate` requires `X-App-Key: <key>`.
+  Allocate mints quota plus agent tokens, i.e. it is a privilege grant, so
+  only the operator app may call it; agents must not self-provision. Missing
+  key → `401 {"code":"unauthorized"}`; wrong key → `403 {"code":"forbidden"}`.
+  Comparison is `crypto/subtle` constant-time against the stored sha256, the
+  same style as agent-token comparison. The response shape is unchanged —
+  it still returns the wallet's agent `{wallet, containerId, token}`.
+- **Agent, opaque bearer token** — `POST /run` and `POST /transfer-quota`
+  require `Authorization: Bearer <token>` with unchanged semantics (plus the
+  transfer payment-proof check, unchanged). An app key buys nothing here:
+  `/run` with only an app key is still 401, and `/run` with an agent token
+  needs no app key.
+
+Why a shared key and not the usual alternatives: no IP allowlisting — the
+Next app's egress location is unknown (Vercel/VPS IPs are dynamic and
+brittle), so an allowlist would either break deploys or rot into `0.0.0.0/0`;
+key-based auth is location-independent. No mTLS yet — worth adding once the
+app host is fixed and stable (client certs give per-caller identity without
+shared-secret rotation pain); until then the app key is the whole operator
+boundary: keep it long, random, out of logs (the service never logs it or
+agent tokens), and rotate on any suspected leak.
+
+Agent token lifecycle (unchanged):
+
+- `POST /allocate` returns `{wallet, containerId, token}`. The token is 32
+  `crypto/rand` bytes hex-encoded; only its sha256 is stored and comparison uses
+  `crypto/subtle`.
 - Every successful allocate rotates the token — use the newest one.
 - Tokens expire at `settledAt + WINDOW_HOURS` once the pool settles (the
   compute window starts at settlement, so pre-settle allocations stay usable
@@ -77,14 +107,19 @@ capped at target".
   the wallet's token, so a dropped agent cannot keep executing.
 - Transfer-created wallets are issued a token by the same mint helper as
   `/allocate` (identical format/expiry); the transfer response carries it as
-  `toToken`, and `/allocate` for that wallet accepts it (rotating a new one).
+  `toToken`.
 
 ```sh
+APP_KEY="..."  # >=16 chars, 32+ random recommended
 TOKEN=$(curl -s -X POST localhost:8080/allocate \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json' -H "X-App-Key: $APP_KEY" \
   -d '{"wallet":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8","cpu":0.2,"mem":800}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
 curl -s -X POST localhost:8080/run \
   -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+  -d '{"wallet":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8","cmd":["echo","hi"]}'
+# operator key alone runs nothing: the next line is 401
+curl -s -X POST localhost:8080/run \
+  -H 'Content-Type: application/json' -H "X-App-Key: $APP_KEY" \
   -d '{"wallet":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8","cmd":["echo","hi"]}'
 ```
 
@@ -117,13 +152,15 @@ a denial: a down node must not brick local metering.
 
 ```sh
 curl -s -X POST localhost:8080/allocate \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json' -H "X-App-Key: $APP_KEY" \
   -d '{"wallet":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8","cpu":0.2,"mem":800}'
 # {"wallet":"0x7099...79c8","containerId":"abc123","token":"..."}
 ```
 
-Idempotent per wallet with auth: re-allocating replaces limits and container
-and rotates the token. Admission is a single atomic reservation
+Operator-tier: requires `X-App-Key` (401 missing, 403 wrong); agent tokens
+are neither accepted nor needed here. Idempotent per wallet: re-allocating
+replaces limits and container and rotates the token. Admission is a single
+atomic reservation
 (`SUM(entitlements) <= totals` in integer micro-CU/MB, wallet-sorted, plus
 `MAX_AGENTS` for new wallets — no float epsilon, deterministic under
 concurrency); the container is created after the reservation and confirmed,

@@ -39,6 +39,9 @@ func run(logger *slog.Logger) error {
 		slog.Bool("settleEnabled", cfg.PoolAddress != ""))
 
 	ledger := store.NewStore(cfg.WindowHours)
+	if cfg.AllowNoAppAuth {
+		logger.Warn("ALLOW_NO_APP_AUTH=1: operator endpoints accept unauthenticated provisioning; dev-only, never enable in production")
+	}
 	be, err := pickBackend(logger, cfg.DockerHost, cfg.NetworkMode, cfg.RequireDocker)
 	if err != nil {
 		return err
