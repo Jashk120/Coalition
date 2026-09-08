@@ -126,6 +126,9 @@ export function orchestratorBaseUrl(): string {
 /** Range cap of the public Arc RPC: log scans run in chunks this size. */
 const LOG_CHUNK_BLOCKS = 10_000n;
 
+/** Pause between log chunks so the burst stays under the public RPC throttle. */
+const LOG_CHUNK_SPACING_MS = 400;
+
 /** Events the activity feed reads: one getLogs call matches either topic. */
 const POOL_ACTIVITY_EVENTS = resourcePoolAbi.filter(
   (entry) =>
@@ -143,15 +146,15 @@ function isRateLimit(error: unknown): boolean {
 type ActivityClient = ReturnType<typeof arcPublicClient>;
 
 /**
- * One log chunk with a single retry: the public RPC throttles bursts (the
- * dashboard fires pool-state, resolution, and activity reads together), so
- * a throttled first attempt waits 1.5s and tries once more before failing.
+ * One log chunk with exponential-backoff retries: the public RPC throttles
+ * bursts (the dashboard fires pool-state, resolution, and activity reads
+ * together), so a throttled attempt waits 1.5s / 3s / 6s before retrying.
  */
 async function getActivityChunk(
   client: ActivityClient,
   from: bigint,
   to: bigint,
-  retried = false,
+  attempt = 0,
 ) {
   try {
     const logs = await withTimeout(
@@ -166,9 +169,11 @@ async function getActivityChunk(
     );
     return parseEventLogs({ abi: resourcePoolAbi, logs });
   } catch (error) {
-    if (!retried && isRateLimit(error)) {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      return getActivityChunk(client, from, to, true);
+    if (isRateLimit(error) && attempt < 3) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1500 * 2 ** attempt),
+      );
+      return getActivityChunk(client, from, to, attempt + 1);
     }
     throw error;
   }
@@ -188,11 +193,16 @@ export async function readActivity(): Promise<readonly ActivityEvent[]> {
     "chain getBlockNumber",
   );
   const events: ActivityEvent[] = [];
+  let firstChunk = true;
   for (
     let cursor = POOL_DEPLOY_BLOCK;
     cursor <= latest;
     cursor = cursor + LOG_CHUNK_BLOCKS + 1n
   ) {
+    if (!firstChunk) {
+      await new Promise((resolve) => setTimeout(resolve, LOG_CHUNK_SPACING_MS));
+    }
+    firstChunk = false;
     const end =
       cursor + LOG_CHUNK_BLOCKS > latest ? latest : cursor + LOG_CHUNK_BLOCKS;
     const parsed = await getActivityChunk(client, cursor, end);
