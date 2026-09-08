@@ -1,0 +1,16 @@
+{
+  "name": "coalition-resource-pool",
+  "version": "0.1.0",
+  "description": "Subgraph Studio subgraph indexing the Coalition ResourcePool on Arc testnet",
+  "license": "MIT",
+  "scripts": {
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "deploy": "graph deploy coalition-resource-pool",
+    "create": "graph create coalition-resource-pool"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "^0.90.0",
+    "@graphprotocol/graph-ts": "^0.34.0"
+  }
+}

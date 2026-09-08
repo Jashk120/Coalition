@@ -1,0 +1,55 @@
+[
+  {
+    "type": "event",
+    "name": "Committed",
+    "inputs": [
+      { "name": "agent", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "amount", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompletionRecorded",
+    "inputs": [
+      { "name": "agentId", "type": "uint256", "indexed": true, "internalType": "uint256" },
+      { "name": "value", "type": "int128", "indexed": false, "internalType": "int128" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DroppedOut",
+    "inputs": [
+      { "name": "agent", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "forfeited", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ExpiredFinalized",
+    "inputs": [
+      { "name": "balance", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "claimants", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Refunded",
+    "inputs": [
+      { "name": "agent", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "amount", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Settled",
+    "inputs": [
+      { "name": "total", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  }
+]

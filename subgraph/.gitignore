@@ -1,0 +1,4 @@
+# graph-cli output — regenerate via `npm run codegen` / `npm run build`
+node_modules/
+generated/
+build/

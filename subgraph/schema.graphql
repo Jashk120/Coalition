@@ -1,0 +1,99 @@
+# Coalition ResourcePool subgraph schema.
+#
+# Source of truth for event shapes: contracts/src/ResourcePool.sol and the
+# generated SDK ABI at sdk/src/pool/abi.ts (never hand-edit that file).
+#
+# Amounts are 6-decimal atomic USDC (ERC-20 view) stored as BigInt.
+# See sdk/README.md "Dual-decimal warning": never mix with 18-decimal
+# native values or float math.
+
+type Pool @entity(immutable: false) {
+  id: ID!
+  target: BigInt!
+  totalCommitted: BigInt!
+  forfeitedTotal: BigInt!
+  settled: Boolean!
+  expiredFinalized: Boolean!
+  participantCount: BigInt!
+  commitments: [Commitment!]! @derivedFrom(field: "pool")
+  dropouts: [Dropout!]! @derivedFrom(field: "pool")
+  settlements: [Settlement!]! @derivedFrom(field: "pool")
+  refunds: [Refund!]! @derivedFrom(field: "pool")
+  completions: [Completion!]! @derivedFrom(field: "pool")
+}
+
+# One row per Committed(address indexed agent, uint256 amount) event.
+# Repeat commits from the same wallet are separate rows; id is tx+logIndex.
+type Commitment @entity(immutable: true) {
+  id: ID!
+  pool: Pool!
+  wallet: Bytes!
+  amount: BigInt!
+  block: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
+
+# One row per DroppedOut(address indexed agent, uint256 forfeited) event.
+type Dropout @entity(immutable: true) {
+  id: ID!
+  pool: Pool!
+  wallet: Bytes!
+  forfeited: BigInt!
+  block: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
+
+# One row per Settled(uint256 total) event.
+#
+# NOTE: ResourcePool emits Settled on BOTH the settle() path (threshold met)
+# and the finalizeExpired() all-dropped sweep (funds to provider so nothing
+# strands). `kind` records which path the mapping inferred; consumers must
+# treat this entity as "funds left the pool", not "threshold met".
+type Settlement @entity(immutable: true) {
+  id: ID!
+  pool: Pool!
+  total: BigInt!
+  kind: String!
+  block: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
+
+# One row per Refunded(address indexed agent, uint256 amount) event
+# (each claimRefund pull-withdrawal after finalizeExpired).
+type Refund @entity(immutable: true) {
+  id: ID!
+  pool: Pool!
+  wallet: Bytes!
+  amount: BigInt!
+  block: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
+
+# One row per ExpiredFinalized(uint256 balance, uint256 claimants) event.
+# This is the expiry marker (snapshot taken); individual payouts follow
+# as Refund rows. It is NOT funds leaving the pool.
+type Expiry @entity(immutable: true) {
+  id: ID!
+  pool: Pool!
+  balance: BigInt!
+  claimants: BigInt!
+  block: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
+
+# One row per CompletionRecorded(uint256 indexed agentId, int128 value)
+# event (mirrors each ERC-8004 feedback write: dropout = -1, completion = +1).
+type Completion @entity(immutable: true) {
+  id: ID!
+  pool: Pool!
+  agentId: BigInt!
+  value: BigInt!
+  block: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
