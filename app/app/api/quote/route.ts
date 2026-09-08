@@ -32,10 +32,23 @@ export async function GET(request: Request): Promise<Response> {
       headers: { "content-type": "application/json" },
     });
   } catch (error) {
+    const message = errorMessage(error);
+    // Pre-settle no wallet holds orchestrator entitlement, so /quote answers
+    // 404 unknown-wallet. That is an expected empty state (no resale quota
+    // yet), not a failure — surface it as data so the panel renders help.
+    if (message.includes("404")) {
+      log("info", "quote.empty", { route: "GET /api/quote", seller });
+      return NextResponse.json({
+        ok: true,
+        empty: true,
+        reason:
+          "seller holds no orchestrator allocation yet — resale quota appears after settle → allocate",
+      });
+    }
     log("warn", "quote.unavailable", {
       route: "GET /api/quote",
       seller,
-      error: errorMessage(error),
+      error: message,
     });
     return NextResponse.json(
       { ok: false, error: `quote unavailable: ${errorMessage(error)}` },

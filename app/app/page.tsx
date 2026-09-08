@@ -12,6 +12,7 @@ import type {
 type QuoteState =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly summary: string }
+  | { readonly status: "empty"; readonly reason: string }
   | { readonly status: "error"; readonly message: string };
 
 type TermsState =
@@ -22,6 +23,7 @@ type TermsState =
 type QuotePayload =
   | {
       readonly ok: true;
+      readonly empty?: false;
       readonly quote: {
         readonly seller: string;
         readonly payTo: string;
@@ -31,6 +33,7 @@ type QuotePayload =
         readonly availableCU: string;
       };
     }
+  | { readonly ok: true; readonly empty: true; readonly reason: string }
   | { readonly ok: false; readonly error: string };
 
 type TermsPayload =
@@ -124,6 +127,10 @@ export default function DashboardPage() {
         const quoteBody = (await parseJson(quoteRes)) as QuotePayload;
         if (cancelled) return;
         if (quoteBody.ok) {
+          if (quoteBody.empty === true) {
+            setQuote({ status: "empty", reason: quoteBody.reason });
+            return;
+          }
           const q = quoteBody.quote;
           setQuote({
             status: "ready",
@@ -361,6 +368,8 @@ export default function DashboardPage() {
             <div className="state state-error" role="alert">
               Quote unavailable: {quote.message}
             </div>
+          ) : quote.status === "empty" ? (
+            <div className="state">No resale quota yet — {quote.reason}</div>
           ) : (
             <p className="fill-label">{quote.summary}</p>
           )}
