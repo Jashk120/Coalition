@@ -1,0 +1,41 @@
+{
+  "_note": "EXAMPLE SHAPE ONLY — values are per-deployment. The live /terms.json generated from orchestrator config is canonical; the on-chain resourceURI points at it, never at this file.",
+  "name": "Coalition Pool #1 — Shared VPS Window",
+  "version": "1.0.0",
+  "resource": {
+    "type": "VPS",
+    "cpu": "1 CU",
+    "memory": "4 GB",
+    "provider": "coalition-demo"
+  },
+  "funding": {
+    "targetUSDC": "10.00",
+    "targetAtomic": "10000000",
+    "deadlineHours": 48,
+    "agents": 5,
+    "equalShareUSDC": "2.00",
+    "rule": "Atomic settle to provider at threshold; full refund past deadline if unfilled; over-commit capped at target"
+  },
+  "allocation": {
+    "basis": "pro-rata on commitment",
+    "equalShare": { "memoryMB": 819, "cpu": 0.2, "windowHours": 72 },
+    "remainder": "819x5=4095; 1 MB stays unallocated with the pool (integer shares)",
+    "window": "72h of compute from settlement",
+    "metering": "CU-seconds and MB-hours tracked per wallet; overruns throttled/killed"
+  },
+  "forfeiture": {
+    "rule": "Dropout stake stays locked, counts toward target, redistributed pro-rata (settle: remainder splits the resource; refund: remainder splits the tokens)",
+    "reputation": "Dropout recorded as -1 feedback, completion as +1, tag2 pool"
+  },
+  "resale": {
+    "permitted": true,
+    "pricing": "cost basis only (~0.00244 USDC/MB, ~0.139 USDC/CU-hour); no auction pricing",
+    "rails": "x402 via Gateway batching preferred, direct USDC transfer as fallback",
+    "effect": "Quota shifts seller to buyer on confirmed payment; evolution toward 1:1 price-to-use"
+  },
+  "settlement": {
+    "chain": "Arc testnet (eip155:5042002)",
+    "asset": "USDC (6-decimal ERC-20 view)",
+    "method": "atomic transfer to provider; anyone may call once filled"
+  }
+}
