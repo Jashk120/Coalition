@@ -226,7 +226,7 @@ as decimal strings (uint format, so the SDK's `parseUint` keeps parsing).
 halving is the cost model, not a discount: the target pays for both dimensions
 jointly, so each leg prices half the target and the SDK's
 `mb*rateMB + cu*rateCU` composition lands on the funded share — the equal
-slice 819MB + 0.2CU costs 1999180 atomic ≈ the seller's $2.00 share, with the
+slice 819MB + 0.2CU costs 1999180 atomic ≈ the seller's $2.50 share, with the
 division dust staying unpriced with the pool. `availableMB`/`availableCU` are
 the remaining slice in MB and micro-CU (cores × 1e6, floored — fractional cores
 can never cross as a bare float); `availableMBHours`/`availableCUSeconds`

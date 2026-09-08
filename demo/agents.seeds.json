@@ -19,13 +19,13 @@
     "decimals": 6
   },
   "fundingPlan": {
-    "perAgentUsdc": "2.00",
-    "perAgentAtomic": "2000000",
-    "agentsTotalAtomic": "8000000",
-    "agentsTotalUsdc": "8.00",
-    "headroomAtomic": "2000000",
-    "headroomUsdc": "2.00",
-    "headroomFor": "5th agent join or top-up of an existing share; commit reverts past target (OverTarget) so headroom can never overfill"
+    "perAgentUsdc": "2.50",
+    "perAgentAtomic": "2500000",
+    "agentsTotalAtomic": "10000000",
+    "agentsTotalUsdc": "10.00",
+    "headroomAtomic": "0",
+    "headroomUsdc": "0.00",
+    "headroomFor": "none — 4 x 2.50 fills the 10.00 target exactly; any further commit reverts OverTarget"
   },
   "orchestratorBudget": {
     "cpuTotal": 1.0,
@@ -48,8 +48,8 @@
       "wallet": "0x0427194a9c99599a8bbbcc292b1523be91e4101d",
       "cpu": 0.2,
       "memMB": 800,
-      "commitUsdc": "2.00",
-      "commitAtomic": "2000000",
+      "commitUsdc": "2.50",
+      "commitAtomic": "2500000",
       "agentId": null,
       "note": "ERC-8004 agentId filled at runtime via registerAgent; null here keeps seeds deterministic pre-registration."
     },
@@ -60,8 +60,8 @@
       "wallet": "0xd1a3c06eb92dfd48fa1bf10ba2071da25e39cd47",
       "cpu": 0.15,
       "memMB": 600,
-      "commitUsdc": "2.00",
-      "commitAtomic": "2000000",
+      "commitUsdc": "2.50",
+      "commitAtomic": "2500000",
       "agentId": null,
       "note": "Deliberate-dropout candidate per Days 6-7/9 plan: if the demo needs a dropout, use this agent's dropOut path (forfeit + `dropout` tag) — decided at run time, never pre-scripted in seeds."
     },
@@ -72,8 +72,8 @@
       "wallet": "0x072825b4ba2c8019ccceba10e59b29a40980be94",
       "cpu": 0.1,
       "memMB": 400,
-      "commitUsdc": "2.00",
-      "commitAtomic": "2000000",
+      "commitUsdc": "2.50",
+      "commitAtomic": "2500000",
       "agentId": null,
       "note": null
     },
@@ -84,8 +84,8 @@
       "wallet": "0x67bc424b83be66f7f5c4fc2324d4154744f1b310",
       "cpu": 0.25,
       "memMB": 1000,
-      "commitUsdc": "2.00",
-      "commitAtomic": "2000000",
+      "commitUsdc": "2.50",
+      "commitAtomic": "2500000",
       "agentId": null,
       "note": null
     }

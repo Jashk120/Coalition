@@ -61,3 +61,27 @@ export type RunResponse =
       readonly decisions: readonly AgentDecision[];
     }
   | { readonly ok: false; readonly error: string };
+
+/** One on-chain pool event (amounts are atomic-unit decimal strings). */
+export type ActivityEvent =
+  | {
+      readonly kind: "committed";
+      readonly agent: string;
+      readonly amountAtomic: string;
+      readonly blockNumber: string;
+      readonly txHash: string;
+    }
+  | {
+      readonly kind: "settled";
+      readonly totalAtomic: string;
+      readonly blockNumber: string;
+      readonly txHash: string;
+    };
+
+export type ActivityResponse =
+  | {
+      readonly ok: true;
+      readonly pool: string;
+      readonly events: readonly ActivityEvent[];
+    }
+  | { readonly ok: false; readonly error: string };

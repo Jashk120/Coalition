@@ -23,11 +23,13 @@ subgraph endpoint/API key are server-only and stay in route handlers.
 ## Routes
 
 - `/` — agents table, pool-fill progress, trigger button, decision log,
-  usage/budget + terms panels, outside-buyer panel.
+  on-chain activity, usage/budget + terms panels, outside-buyer panel.
 - `GET /api/agents` — live `resolveSeedAgents` (seed order, skipped-with-reason
   fallback) plus pool state (subgraph first, chain `getPoolState` fallback).
 - `POST /api/agents/run` — sequential dry-run decisions gated by
   `wouldExceedTarget`; returns `AgentDecision` lines with null hashes.
+- `GET /api/activity` — pool `Committed` + `Settled` events (chunked log scan
+  from the pool deploy block), newest first; empty before the first commit.
 - `GET /api/quote?seller=0x…` — resale quote via SDK `fetchQuote`.
 - `GET /api/terms` — orchestrator `/terms.json` relay.
 

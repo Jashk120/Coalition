@@ -13,7 +13,7 @@
     "targetAtomic": "10000000",
     "deadlineHours": 48,
     "agents": 5,
-    "equalShareUSDC": "2.00",
+    "equalShareUSDC": "2.50",
     "rule": "Atomic settle to provider at threshold; full refund past deadline if unfilled; over-commit capped at target"
   },
   "allocation": {

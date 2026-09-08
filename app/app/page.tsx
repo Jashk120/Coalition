@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { OUTSIDE_BUYER, SEED_META } from "@/lib/constants";
+import { EXPLORER_URL, OUTSIDE_BUYER, SEED_META } from "@/lib/constants";
 import type {
+  ActivityEvent,
+  ActivityResponse,
   AgentDecision,
   AgentsResponse,
   ResolutionView,
@@ -18,6 +20,17 @@ type QuoteState =
 type TermsState =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly body: string }
+  | { readonly status: "error"; readonly message: string };
+
+type AgentQuoteState = {
+  readonly wallet: string;
+  readonly ensName: string;
+  readonly quote: QuoteState;
+};
+
+type ActivityState =
+  | { readonly status: "loading" }
+  | { readonly status: "ready"; readonly events: readonly ActivityEvent[] }
   | { readonly status: "error"; readonly message: string };
 
 type QuotePayload =
@@ -92,7 +105,8 @@ export default function DashboardPage() {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [log, setLog] = useState<readonly AgentDecision[]>([]);
-  const [quote, setQuote] = useState<QuoteState>({ status: "loading" });
+  const [quotes, setQuotes] = useState<readonly AgentQuoteState[]>([]);
+  const [activity, setActivity] = useState<ActivityState>({ status: "loading" });
   const [terms, setTerms] = useState<TermsState>({ status: "loading" });
 
   const loadAgents = useCallback(async () => {
@@ -118,38 +132,65 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadUsage(): Promise<void> {
-      try {
-        const quoteRes = await fetch(
-          `/api/quote?seller=${SEED_META[0]?.wallet ?? ""}`,
-          { cache: "no-store" },
-        );
-        const quoteBody = (await parseJson(quoteRes)) as QuotePayload;
-        if (cancelled) return;
-        if (quoteBody.ok) {
-          if (quoteBody.empty === true) {
-            setQuote({ status: "empty", reason: quoteBody.reason });
-            return;
+    async function loadQuotes(): Promise<void> {
+      const rows = await Promise.all(
+        SEED_META.map(async (seed): Promise<AgentQuoteState> => {
+          const base = { wallet: seed.wallet, ensName: seed.ensName };
+          try {
+            const quoteRes = await fetch(
+              `/api/quote?seller=${seed.wallet}`,
+              { cache: "no-store" },
+            );
+            const quoteBody = (await parseJson(quoteRes)) as QuotePayload;
+            if (quoteBody.ok) {
+              if (quoteBody.empty === true) {
+                return { ...base, quote: { status: "empty", reason: quoteBody.reason } };
+              }
+              const q = quoteBody.quote;
+              return {
+                ...base,
+                quote: {
+                  status: "ready",
+                  summary:
+                    `rate ${q.ratePerMBAtomic} atomic/MB + ${q.ratePerCUAtomic} atomic/CU; ` +
+                    `available ${q.availableMB} MB / ${q.availableCU} CU`,
+                },
+              };
+            }
+            return { ...base, quote: { status: "error", message: quoteBody.error } };
+          } catch (error) {
+            return {
+              ...base,
+              quote: {
+                status: "error",
+                message: error instanceof Error ? error.message : String(error),
+              },
+            };
           }
-          const q = quoteBody.quote;
-          setQuote({
-            status: "ready",
-            summary:
-              `seller ${shortAddress(q.seller)} → payTo ${shortAddress(q.payTo)}; ` +
-              `rate ${q.ratePerMBAtomic} atomic/MB + ${q.ratePerCUAtomic} atomic/CU; ` +
-              `available ${q.availableMB} MB / ${q.availableCU} CU`,
-          });
+        }),
+      );
+      if (!cancelled) setQuotes(rows);
+    }
+    async function loadActivity(): Promise<void> {
+      try {
+        const activityRes = await fetch("/api/activity", { cache: "no-store" });
+        const activityBody = (await parseJson(activityRes)) as ActivityResponse;
+        if (cancelled) return;
+        if (activityBody.ok) {
+          setActivity({ status: "ready", events: activityBody.events });
         } else {
-          setQuote({ status: "error", message: quoteBody.error });
+          setActivity({ status: "error", message: activityBody.error });
         }
       } catch (error) {
         if (!cancelled) {
-          setQuote({
+          setActivity({
             status: "error",
             message: error instanceof Error ? error.message : String(error),
           });
         }
       }
+    }
+    async function loadTerms(): Promise<void> {
       try {
         const termsRes = await fetch("/api/terms", { cache: "no-store" });
         const termsBody = (await parseJson(termsRes)) as TermsPayload;
@@ -171,7 +212,9 @@ export default function DashboardPage() {
         }
       }
     }
-    void loadUsage();
+    void loadQuotes();
+    void loadActivity();
+    void loadTerms();
     return () => {
       cancelled = true;
     };
@@ -359,23 +402,109 @@ export default function DashboardPage() {
         )}
       </section>
 
+      <section className="card" aria-label="On-chain activity">
+        <h2>On-chain activity</h2>
+        {activity.status === "loading" ? (
+          <div className="state">Loading pool events…</div>
+        ) : activity.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Activity unavailable: {activity.message}
+          </div>
+        ) : activity.events.length === 0 ? (
+          <div className="state">
+            No commitments yet — pool awaiting first commit.
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>Agent</th>
+                  <th>Amount</th>
+                  <th>Block</th>
+                  <th>Tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activity.events.map((event) => (
+                  <tr key={`${event.blockNumber}-${event.txHash}-${event.kind}`}>
+                    <td>{event.kind}</td>
+                    <td className="mono">
+                      {event.kind === "committed"
+                        ? shortAddress(event.agent)
+                        : "—"}
+                    </td>
+                    <td>
+                      {event.kind === "committed"
+                        ? `${formatUsdc(event.amountAtomic)} USDC`
+                        : `${formatUsdc(event.totalAtomic)} USDC`}
+                    </td>
+                    <td className="mono">{event.blockNumber}</td>
+                    <td className="mono">
+                      <a
+                        href={`${EXPLORER_URL}/tx/${event.txHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {shortAddress(event.txHash)}
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <div className="grid-two">
         <section className="card" aria-label="Usage and budget">
           <h2>Usage / budget</h2>
-          {quote.status === "loading" ? (
-            <div className="state">Loading resale quote…</div>
-          ) : quote.status === "error" ? (
-            <div className="state state-error" role="alert">
-              Quote unavailable: {quote.message}
-            </div>
-          ) : quote.status === "empty" ? (
-            <div className="state">No resale quota yet — {quote.reason}</div>
+          {quotes.length === 0 ? (
+            <div className="state">Loading resale quotes…</div>
           ) : (
-            <p className="fill-label">{quote.summary}</p>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    <th>Orchestrator quota</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quotes.map((row) => (
+                    <tr key={row.wallet}>
+                      <td>
+                        <div className="mono">{row.ensName}</div>
+                        <div className="mono">{shortAddress(row.wallet)}</div>
+                      </td>
+                      <td>
+                        {row.quote.status === "ready" ? (
+                          <span className="fill-label">{row.quote.summary}</span>
+                        ) : row.quote.status === "empty" ? (
+                          <span className="state">
+                            Not allocated — {row.quote.reason}
+                          </span>
+                        ) : row.quote.status === "error" ? (
+                          <span className="state state-error" role="alert">
+                            Quote unavailable: {row.quote.message}
+                          </span>
+                        ) : (
+                          <span className="state">Loading…</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           <p className="fill-label">
             Orchestrator budgets (cpu 0.70/1.0, mem 2800/4096 MB) are enforced
-            behind POST /allocate + /run; this panel quotes resale pricing only.
+            behind POST /allocate + /run. Each row quotes that agent&apos;s
+            resale pricing and remaining budgets — unknown wallet means not
+            allocated yet; remaining budgets shrink as /run usage accrues.
           </p>
         </section>
 

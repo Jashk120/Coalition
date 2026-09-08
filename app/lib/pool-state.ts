@@ -1,12 +1,14 @@
+import { parseEventLogs } from "viem";
 import {
   createGraphClient,
   getPoolFill,
   getPoolState,
+  resourcePoolAbi,
 } from "@jx-nexus/coalition";
 import { TARGET_ATOMIC } from "./constants";
-import { POOL_ADDRESS } from "./constants";
+import { POOL_ADDRESS, POOL_DEPLOY_BLOCK } from "./constants";
 import { arcPublicClient } from "./chain";
-import type { PoolStateView } from "./types";
+import type { ActivityEvent, PoolStateView } from "./types";
 
 export type PoolReadout = {
   readonly view: PoolStateView;
@@ -119,4 +121,100 @@ export function orchestratorBaseUrl(): string {
   const pub = process.env["NEXT_PUBLIC_ORCHESTRATOR_URL"];
   if (pub !== undefined && pub !== "") return pub;
   return "http://localhost:8080";
+}
+
+/** Range cap of the public Arc RPC: log scans run in chunks this size. */
+const LOG_CHUNK_BLOCKS = 10_000n;
+
+/** Events the activity feed reads: one getLogs call matches either topic. */
+const POOL_ACTIVITY_EVENTS = resourcePoolAbi.filter(
+  (entry) =>
+    entry.type === "event" &&
+    (entry.name === "Committed" || entry.name === "Settled"),
+);
+
+function isRateLimit(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /rate limit|exceeds defined limit|too many requests|429/i.test(
+    message,
+  );
+}
+
+type ActivityClient = ReturnType<typeof arcPublicClient>;
+
+/**
+ * One log chunk with a single retry: the public RPC throttles bursts (the
+ * dashboard fires pool-state, resolution, and activity reads together), so
+ * a throttled first attempt waits 1.5s and tries once more before failing.
+ */
+async function getActivityChunk(
+  client: ActivityClient,
+  from: bigint,
+  to: bigint,
+  retried = false,
+) {
+  try {
+    const logs = await withTimeout(
+      client.getLogs({
+        address: POOL_ADDRESS,
+        events: POOL_ACTIVITY_EVENTS,
+        fromBlock: from,
+        toBlock: to,
+      }),
+      15_000,
+      "chain getLogs (activity)",
+    );
+    return parseEventLogs({ abi: resourcePoolAbi, logs });
+  } catch (error) {
+    if (!retried && isRateLimit(error)) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return getActivityChunk(client, from, to, true);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Pool funding events, newest first. `Committed` + `Settled` reads run in
+ * 10k-block chunks from the pool deploy block because the public Arc RPC
+ * rejects wider ranges. An empty array is a valid pre-fill state, not an
+ * error — the UI renders "awaiting first commit".
+ */
+export async function readActivity(): Promise<readonly ActivityEvent[]> {
+  const client = arcPublicClient();
+  const latest = await withTimeout(
+    client.getBlockNumber(),
+    10_000,
+    "chain getBlockNumber",
+  );
+  const events: ActivityEvent[] = [];
+  for (
+    let cursor = POOL_DEPLOY_BLOCK;
+    cursor <= latest;
+    cursor = cursor + LOG_CHUNK_BLOCKS + 1n
+  ) {
+    const end =
+      cursor + LOG_CHUNK_BLOCKS > latest ? latest : cursor + LOG_CHUNK_BLOCKS;
+    const parsed = await getActivityChunk(client, cursor, end);
+    for (const log of parsed) {
+      if (log.eventName === "Committed") {
+        events.push({
+          kind: "committed",
+          agent: log.args.agent,
+          amountAtomic: log.args.amount.toString(),
+          blockNumber: log.blockNumber.toString(),
+          txHash: log.transactionHash,
+        });
+      } else if (log.eventName === "Settled") {
+        events.push({
+          kind: "settled",
+          totalAtomic: log.args.total.toString(),
+          blockNumber: log.blockNumber.toString(),
+          txHash: log.transactionHash,
+        });
+      }
+    }
+    if (end === latest) break;
+  }
+  return events.reverse();
 }

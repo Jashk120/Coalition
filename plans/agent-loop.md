@@ -29,10 +29,10 @@ and never commits.
 
 | # | subname (`ensName`) | wallet (cross-check + fallback) | cpu | mem | share |
 |---|---|---|---|---|---|
-| agent-1 | `agent1.agentpool.eth` | `0x0427194a9c99599a8bbbcc292b1523be91e4101d` | 0.2 | 800 MB | $2.00 = `2000000` atomic |
-| agent-2 | `agent2.agentpool.eth` | `0xd1a3c06eb92dfd48fa1bf10ba2071da25e39cd47` | 0.15 | 600 MB | $2.00 = `2000000` atomic |
-| agent-3 | `agent3.agentpool.eth` | `0x072825b4ba2c8019ccceba10e59b29a40980be94` | 0.1 | 400 MB | $2.00 = `2000000` atomic |
-| agent-4 | `agent4.agentpool.eth` | `0x67bc424b83be66f7f5c4fc2324d4154744f1b310` | 0.25 | 1000 MB | $2.00 = `2000000` atomic |
+| agent-1 | `agent1.agentpool.eth` | `0x0427194a9c99599a8bbbcc292b1523be91e4101d` | 0.2 | 800 MB | $2.50 = `2500000` atomic |
+| agent-2 | `agent2.agentpool.eth` | `0xd1a3c06eb92dfd48fa1bf10ba2071da25e39cd47` | 0.15 | 600 MB | $2.50 = `2500000` atomic |
+| agent-3 | `agent3.agentpool.eth` | `0x072825b4ba2c8019ccceba10e59b29a40980be94` | 0.1 | 400 MB | $2.50 = `2500000` atomic |
+| agent-4 | `agent4.agentpool.eth` | `0x67bc424b83be66f7f5c4fc2324d4154744f1b310` | 0.25 | 1000 MB | $2.50 = `2500000` atomic |
 
 Held out: `0x71846352cc198d7f3bfeb677f8631eb84d311329` (resale buyer,
 optional `buyer.agentpool.eth` — never commits, stays outside the loop).
@@ -45,8 +45,8 @@ and `sdk/src/demo/seeds.ts` (`DEMO_SEED_AGENTS`, same order, same values).
 before Sepolia records land. Sequential order agent-1 → agent-4 is unchanged.
 
 Totals: cpu `0.70 / 1.0`, mem `2800 / 4096 MB` (fits orchestrator defaults
-`CPU_UNITS=1`, `MEM_MB=4096`, `MAX_AGENTS=5`); funding `8.00 / 10.00`,
-headroom `2.00` for a 5th join or a top-up. `agentId` is `null` in seeds —
+`CPU_UNITS=1`, `MEM_MB=4096`, `MAX_AGENTS=5`); funding `10.00 / 10.00` —
+4 x 2.50 fills the target exactly, no headroom remains. `agentId` is `null` in seeds —
 filled at runtime via `registerAgent`; seeds stay deterministic pre-registration.
 Agent-2 is the designated deliberate-dropout candidate per the Days 6–7/9 plan
 (decision made live, never pre-scripted in the seed file).
@@ -93,7 +93,7 @@ Per-agent result (also the `DecisionLog` line shape):
 ```ts
 type AgentDecision =
   | { agent: "agent-1" | "agent-2" | "agent-3" | "agent-4";
-      decision: "join"; reason: string; amountAtomic: "2000000";
+      decision: "join"; reason: string; amountAtomic: "2500000";
       poolFillBefore: string; poolFillAfter: string;
       approveHash: `0x${string}`; commitHash: `0x${string}` }
   | { agent: "agent-1" | "agent-2" | "agent-3" | "agent-4";
@@ -202,13 +202,13 @@ entries already resolved; the scored path above is now the default first.
 Join IFF **all** hold, else skip with a reason string:
 
 1. `settled === false && expired === false` (from `getPoolState`);
-2. capacity: `wouldExceedTarget(state, 2000000n) === false` **and**
+2. capacity: `wouldExceedTarget(state, 2500000n) === false` **and**
    `participantCount < maxParticipants` (from `getPoolMetadata`);
 3. reputation passes per (b) — no unrevoked `dropout` tag.
 
 ```ts
 import { wouldExceedTarget } from "@jx-nexus/coalition";
-const fits = !wouldExceedTarget(state, 2000000n); // 2000000n = $2.00
+const fits = !wouldExceedTarget(state, 2500000n); // 2500000n = $2.50
 ```
 
 Skip reasons are fixed strings, e.g. `"skip: would exceed 10.00 target"`,
@@ -226,16 +226,16 @@ Exact CLI syntax — `--address` is the agent's own seed wallet,
 `--chain ARC-TESTNET` on every call:
 
 ```sh
-# 1. approve the pool to pull $2.00 (2000000 atomic, 6-dec view)
+# 1. approve the pool to pull $2.50 (2500000 atomic, 6-dec view)
 circle wallet execute "approve(address,uint256)" \
-  0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd 2000000 \
+  0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd 2500000 \
   --contract 0x3600000000000000000000000000000000000000 \
   --address 0x0427194a9c99599a8bbbcc292b1523be91e4101d \
   --chain ARC-TESTNET
 
-# 2. commit $2.00 — reverts OverTarget past 10.00 / TooManyParticipants past cap
+# 2. commit $2.50 — reverts OverTarget past 10.00 / TooManyParticipants past cap
 circle wallet execute "commit(uint256)" \
-  2000000 \
+  2500000 \
   --contract 0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd \
   --address 0x0427194a9c99599a8bbbcc292b1523be91e4101d \
   --chain ARC-TESTNET
@@ -246,8 +246,8 @@ Substitute `--address` per seed for agent-2/3/4. SDK equivalent (same
 
 ```ts
 import { commitToPool, wouldExceedTarget } from "@jx-nexus/coalition";
-if (!wouldExceedTarget(state, 2000000n))
-  await commitToPool({ walletClient, account, pool, amount: 2000000n });
+if (!wouldExceedTarget(state, 2500000n))
+  await commitToPool({ walletClient, account, pool, amount: 2500000n });
 ```
 
 Pool rules honored (`contracts/src/ResourcePool.sol`): cap at target
@@ -262,12 +262,12 @@ live decision only): `dropOut(agentId)` forfeits the stake, writes
 One JSON line per agent to stdout (and `demo/run-log.jsonl`), in seed order:
 
 ```json
-{"t":"2026-09-08T12:00:01Z","agent":"agent-1","wallet":"0x0427194a…","decision":"join","reason":"fill 6.00/10.00 allows +2.00; no dropout tag","amountAtomic":"2000000","approveHash":"0x…","commitHash":"0x…"}
+{"t":"2026-09-08T12:00:01Z","agent":"agent-1","wallet":"0x0427194a…","decision":"join","reason":"fill 0.00/10.00 allows +2.50; no dropout tag","amountAtomic":"2500000","approveHash":"0x…","commitHash":"0x…"}
 {"t":"2026-09-08T12:00:20Z","agent":"agent-2","wallet":"0xd1a3c0…","decision":"skip","reason":"skip: dropout tag from 0x…","amountAtomic":"0","approveHash":null,"commitHash":null}
 ```
 
 The runner prints `poolFillBefore/After` (from `getPoolState` re-reads) beside
-each line so the video can point at fill % climbing `0 → 2 → … → 8 / 10`.
+each line so the video can point at fill % climbing `0 → 2.5 → … → 10 / 10`.
 
 ## 4. How the LLM drives it
 
@@ -279,30 +279,33 @@ of its own (the runner already fetched everything).
 
 ```text
 You are the Coalition demo decider for {agentId} (wallet {wallet}, cpu {cpu}, mem {memMB}MB).
-Share: $2.00 = 2000000 atomic. Pool 0xC6f9…B4fd, target 10.00 USDC (10000000 atomic).
+Share: $2.50 = 2500000 atomic. Pool 0xC6f9…B4fd, target 10.00 USDC (10000000 atomic).
 
 Pool state (getPoolState): totalCommitted={totalCommitted} target={target} settled={settled} expired={expired} participantCount={participantCount}, maxParticipants={maxParticipants}.
-wouldExceedTarget(+2000000) = {wouldExceed}.
+wouldExceedTarget(+2500000) = {wouldExceed}.
 Subgraph MCP: fill {fillPct}% — {mcpSummary}; prior dropouts: {dropouts}.
 Reputation (getReputationSummary over [{clients}]): count={repCount} value={repValue} decimals={repDecimals}; readFeedback flags: {feedbackFlags} (any "dropout"/negative?).
 Terms (GET /terms.json): {termsExcerpt}
 Resale context (fetchQuote/quoteCost, informational only): {quoteExcerpt}
 
 Join IFF pool open AND wouldExceed=false AND capacity remains AND no unrevoked dropout tag.
-Return ONLY this JSON: {"decision":"join|skip","reason":"<short human string>","amountAtomic":"2000000|<0 on skip>"}
+Return ONLY this JSON: {"decision":"join|skip","reason":"<short human string>","amountAtomic":"2500000|<0 on skip>"}
 ```
 
 ### Example filled inputs → outputs
 
 ```text
 agent-1 @ empty pool: wouldExceed=false, no dropout tag
-→ {"decision":"join","reason":"fill 0.00/10.00 allows +2.00; no dropout tag","amountAtomic":"2000000"}
+→ {"decision":"join","reason":"fill 0.00/10.00 allows +2.50; no dropout tag","amountAtomic":"2500000"}
 
-agent-4 @ 9.00 committed (headroom fiction): wouldExceed=true
+agent-4 @ 7.50 committed: wouldExceed=false, fills the target exactly
+→ {"decision":"join","reason":"fill 7.50/10.00 allows +2.50; no dropout tag","amountAtomic":"2500000"}
+
+any further join @ 10.00 committed: wouldExceed=true
 → {"decision":"skip","reason":"skip: would exceed 10.00 target","amountAtomic":"0"}
 ```
 
-`amountAtomic` echoes the seed (`"2000000"` on join, `"0"` on skip) — the LLM
+`amountAtomic` echoes the seed (`"2500000"` on join, `"0"` on skip) — the LLM
 never invents amounts. The runner enforces the gate independently: a `join`
 with `wouldExceedTarget === true` is downgraded to `skip` before any wallet
 command, so the LLM can never overfill the pool.

@@ -29,8 +29,18 @@ export const IDENTITY_REGISTRY_FROM_BLOCK: bigint = (() => {
 /** Funding target: 10.00 USDC in 6-decimal atomic units. */
 export const TARGET_ATOMIC = 10000000n;
 
-/** Per-agent share: 2.00 USDC in atomic units. */
-export const SHARE_ATOMIC = 2000000n;
+/** First Arc block carrying pool code — activity log scans start here. */
+export const POOL_DEPLOY_BLOCK: bigint = (() => {
+  const raw = process.env["POOL_DEPLOY_BLOCK"];
+  if (raw !== undefined && raw !== "" && /^\d+$/.test(raw)) return BigInt(raw);
+  return 61053443n;
+})();
+
+export const EXPLORER_URL =
+  process.env["NEXT_PUBLIC_EXPLORER_URL"] ?? "https://testnet.arcscan.app";
+
+/** Per-agent share: 2.50 USDC in atomic units (4 x 2.50 = 10.00 target). */
+export const SHARE_ATOMIC = 2500000n;
 
 export const ORCHESTRATOR_URL =
   process.env["NEXT_PUBLIC_ORCHESTRATOR_URL"] ?? "http://localhost:8080";
@@ -54,7 +64,7 @@ export const SEED_META: readonly SeedMeta[] = [
     wallet: "0x0427194a9c99599a8bbbcc292b1523be91e4101d",
     cpu: 0.2,
     memMB: 800,
-    shareUsdc: "2.00",
+    shareUsdc: "2.50",
   },
   {
     id: "agent-2",
@@ -63,7 +73,7 @@ export const SEED_META: readonly SeedMeta[] = [
     wallet: "0xd1a3c06eb92dfd48fa1bf10ba2071da25e39cd47",
     cpu: 0.15,
     memMB: 600,
-    shareUsdc: "2.00",
+    shareUsdc: "2.50",
   },
   {
     id: "agent-3",
@@ -72,7 +82,7 @@ export const SEED_META: readonly SeedMeta[] = [
     wallet: "0x072825b4ba2c8019ccceba10e59b29a40980be94",
     cpu: 0.1,
     memMB: 400,
-    shareUsdc: "2.00",
+    shareUsdc: "2.50",
   },
   {
     id: "agent-4",
@@ -81,7 +91,7 @@ export const SEED_META: readonly SeedMeta[] = [
     wallet: "0x67bc424b83be66f7f5c4fc2324d4154744f1b310",
     cpu: 0.25,
     memMB: 1000,
-    shareUsdc: "2.00",
+    shareUsdc: "2.50",
   },
 ];
 
