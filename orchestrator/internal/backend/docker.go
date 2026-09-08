@@ -29,6 +29,9 @@ type DockerBackend struct {
 	client      *http.Client
 	host        string
 	networkMode string
+	// version is the negotiated Engine API version, defaulting to
+	// engineVersion until Ping downgrades it to the daemon max.
+	version string
 }
 
 // NewDockerBackend builds a backend dialing dockerHost ("" selects the
@@ -52,7 +55,7 @@ func NewDockerBackend(dockerHost string, networkMode ...string) (*DockerBackend,
 		}
 	}
 	client := &http.Client{Transport: transport, Timeout: 60 * time.Second}
-	return &DockerBackend{client: client, host: scheme + "://" + addr, networkMode: mode}, nil
+	return &DockerBackend{client: client, host: scheme + "://" + addr, networkMode: mode, version: engineVersion}, nil
 }
 
 // NetworkMode reports the pinned container network mode.
@@ -91,7 +94,11 @@ func (b *DockerBackend) do(ctx context.Context, method, path string, body []byte
 	if body != nil {
 		rdr = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://docker/"+engineVersion+path, rdr)
+	ver := b.version
+	if ver == "" {
+		ver = engineVersion
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://docker/"+ver+path, rdr)
 	if err != nil {
 		return 0, nil, fmt.Errorf("build request: %w", err)
 	}
@@ -123,7 +130,9 @@ func daemonMessage(out []byte) string {
 	return e.Message
 }
 
-// Ping checks daemon reachability via GET /_ping.
+// Ping checks daemon reachability via GET /_ping and negotiates the API
+// version down when the daemon reports a max below engineVersion (e.g. older
+// distro daemons). Without this the pinned version is rejected outright.
 func (b *DockerBackend) Ping(ctx context.Context) error {
 	status, out, err := b.do(ctx, http.MethodGet, "/_ping", nil)
 	if err != nil {
@@ -132,7 +141,56 @@ func (b *DockerBackend) Ping(ctx context.Context) error {
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("ping: %s: %w", daemonMessage(out), ErrDaemon)
 	}
+	if v, err := b.serverAPIVersion(ctx); err == nil && v != "" && apiOlder(v, b.version) {
+		b.version = v
+	}
 	return nil
+}
+
+// serverAPIVersion reads the daemon max via the unversioned /version endpoint.
+func (b *DockerBackend) serverAPIVersion(ctx context.Context) (string, error) {
+	ver := b.version
+	b.version = engineVersion
+	defer func() { b.version = ver }()
+	status, out, err := b.do(ctx, http.MethodGet, "/version", nil)
+	if err != nil {
+		return "", err
+	}
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("version: %s: %w", daemonMessage(out), ErrDaemon)
+	}
+	var v struct {
+		APIVersion string `json:"ApiVersion"`
+	}
+	if err := json.Unmarshal(out, &v); err != nil || v.APIVersion == "" {
+		return "", fmt.Errorf("decode version: %w", err)
+	}
+	return "v" + strings.TrimPrefix(strings.TrimSpace(v.APIVersion), "v"), nil
+}
+
+// apiOlder reports whether server (v1.NN) is older than client (v1.MM).
+// Unparseable inputs fail safe: no downgrade.
+func apiOlder(server, client string) bool {
+	sn, ok1 := apiMinor(server)
+	cn, ok2 := apiMinor(client)
+	return ok1 && ok2 && sn < cn
+}
+
+func apiMinor(v string) (int, bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return 0, false
+	}
+	var major, minor int
+	if _, err := fmt.Sscanf(parts[0], "%d", &major); err != nil {
+		return 0, false
+	}
+	if _, err := fmt.Sscanf(parts[1], "%d", &minor); err != nil {
+		return 0, false
+	}
+	_ = major
+	return minor, true
 }
 
 // CreateContainer creates and starts a sleeping sandbox with CPU/memory caps.
