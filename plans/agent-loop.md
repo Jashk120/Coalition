@@ -1,0 +1,332 @@
+# Demo agent loop — deterministic 4-agent seeds + LLM-driven skill flow
+
+SPEC ONLY. No on-chain writes, fund moves, or CLI wallet commands are executed
+by this document or by `demo/agents.seeds.json`. All commands below are
+reference syntax for the demo operator / LLM to run live on video.
+
+## 0. Sources of truth (read before running)
+
+| Area | File / endpoint | Symbols used (do not invent others) |
+|---|---|---|
+| Pool reads/writes | `sdk/src/pool/client.ts` | `getPoolState`, `wouldExceedTarget`, `commitToPool`, `getPoolMetadata` |
+| Pool rules | `contracts/src/ResourcePool.sol` | `commit` (approve-first, `OverTarget`, `maxParticipants`), `settle` (only when filled), `dropOut`/`finalizeExpired`/`claimRefund` |
+| Reputation | `sdk/src/reputation/client.ts` | `getReputationSummary` (`clientAddresses` must be non-empty), `readFeedback` |
+| ENS identity (live) | `sdk/src/ens/client.ts`, `sdk/src/demo/client.ts` | `resolveEnsToAgents` (subname → Arc wallet → agent ids), `resolveSeedAgents` / `resolveSeedAgent` (seed-order ENS-first resolution with wallet cross-check), `DEMO_SEED_AGENTS` |
+| Resale quotes | `sdk/src/market/quotes.ts` | `fetchQuote` (`GET /quote?seller=`), `quoteCost` |
+| Orchestrator | `orchestrator/README.md` | `GET /terms.json`, `GET /quote`, `POST /allocate` (operator `X-App-Key`), `POST /run` (agent bearer token) |
+| Wallet skills | `plans/circle-agent-kit.md` §§3–6 | System A runtime skills: `setup`, `wallet-login`, `wallet-fund`, `wallet-pay`, `discover-services`; System B dev skills; §4 Arc runbook (`ARC-TESTNET`); §6 Nanopayments CLI buyer flow |
+| Enforcer (reference only) | `orchestrator/internal/backend/docker.go` | Container enforcement behind `/allocate` + `/run`; flow below stays chain-accurate and does not depend on its internals |
+
+Fixed context: pool `0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd`,
+target `10.00` USDC = `10000000` atomic (6-dec ERC-20 view), Arc `5042002`,
+RPC `https://rpc.testnet.arc.network` (SDK canonical `https://rpc.testnet.arc.io`
+per `sdk/src/chains/arc.ts` — either reaches testnet).
+
+## 1. Seeds (`demo/agents.seeds.json`)
+
+4 of the 5 funded wallets. The 5th is held back as the outside resale buyer
+and never commits.
+
+| # | subname (`ensName`) | wallet (cross-check + fallback) | cpu | mem | share |
+|---|---|---|---|---|---|
+| agent-1 | `agent1.agentpool.eth` | `0x0427194a9c99599a8bbbcc292b1523be91e4101d` | 0.2 | 800 MB | $2.00 = `2000000` atomic |
+| agent-2 | `agent2.agentpool.eth` | `0xd1a3c06eb92dfd48fa1bf10ba2071da25e39cd47` | 0.15 | 600 MB | $2.00 = `2000000` atomic |
+| agent-3 | `agent3.agentpool.eth` | `0x072825b4ba2c8019ccceba10e59b29a40980be94` | 0.1 | 400 MB | $2.00 = `2000000` atomic |
+| agent-4 | `agent4.agentpool.eth` | `0x67bc424b83be66f7f5c4fc2324d4154744f1b310` | 0.25 | 1000 MB | $2.00 = `2000000` atomic |
+
+Held out: `0x71846352cc198d7f3bfeb677f8631eb84d311329` (resale buyer,
+optional `buyer.agentpool.eth` — never commits, stays outside the loop).
+
+Parent `agentpool.eth`, Arc coin type `2152525650` (`ARC_COIN_TYPE`,
+`0x80000000 | 5042002`) — see the `ens` block in `demo/agents.seeds.json`
+and `sdk/src/demo/seeds.ts` (`DEMO_SEED_AGENTS`, same order, same values).
+`ensName` is the live identity; `wallet` is retained as the cross-check
+(resolved Arc wallet must equal it) and as the fallback so the demo runs
+before Sepolia records land. Sequential order agent-1 → agent-4 is unchanged.
+
+Totals: cpu `0.70 / 1.0`, mem `2800 / 4096 MB` (fits orchestrator defaults
+`CPU_UNITS=1`, `MEM_MB=4096`, `MAX_AGENTS=5`); funding `8.00 / 10.00`,
+headroom `2.00` for a 5th join or a top-up. `agentId` is `null` in seeds —
+filled at runtime via `registerAgent`; seeds stay deterministic pre-registration.
+Agent-2 is the designated deliberate-dropout candidate per the Days 6–7/9 plan
+(decision made live, never pre-scripted in the seed file).
+
+## 2. Button trigger — single entrypoint
+
+One action starts the whole loop. No randomness: seeds load verbatim, agents
+run sequentially in seed order (agent-1 → agent-4) so `totalCommitted` grows
+deterministically and the video has stable timestamps.
+
+### 2a. CLI entry
+
+```sh
+npm run demo:agents
+```
+
+Proposed `sdk/package.json` addition (spec — not added by this change):
+
+```json
+{ "scripts": { "demo:agents": "node --no-warnings demo/run-agents.mjs" } }
+```
+
+Runner contract (`demo/run-agents.mjs`, to be written at demo-build time):
+
+1. `readFile demo/agents.seeds.json` — parse, freeze (`Object.freeze`), no RNG.
+2. For each seed in order: build `SkillInput` (§5), run the LLM skill chain
+   (§§3–4), append one `DecisionLog` line (§4e).
+3. Exit non-zero on any unexpected exception; `skip` decisions are normal
+   output, not errors.
+
+### 2b. Request / response shapes
+
+The "button" is either the CLI above or a single POST that enqueues the same
+runner (pick one for the video; both shapes are fixed):
+
+```text
+POST /demo/agents  (Content-Type: application/json)
+{ "seeds": "demo/agents.seeds.json", "dryRun": true }
+→ 202 { "runId": "demo-YYYYMMDD-001", "agents": 4, "mode": "sequential" }
+```
+
+Per-agent result (also the `DecisionLog` line shape):
+
+```ts
+type AgentDecision =
+  | { agent: "agent-1" | "agent-2" | "agent-3" | "agent-4";
+      decision: "join"; reason: string; amountAtomic: "2000000";
+      poolFillBefore: string; poolFillAfter: string;
+      approveHash: `0x${string}`; commitHash: `0x${string}` }
+  | { agent: "agent-1" | "agent-2" | "agent-3" | "agent-4";
+      decision: "skip"; reason: string; amountAtomic: "0";
+      poolFillBefore: string; poolFillAfter: string;
+      approveHash: null; commitHash: null };
+```
+
+`reason` is a human string (e.g. `"fill 8.00/10.00 allows +2.00; no dropout tag"`).
+`dryRun: true` runs steps (a)–(c) + prompt and logs `join|skip` with null hashes.
+
+## 3. Skill flow per agent
+
+Each agent runs the same 5-step chain. Steps (a)–(b) are reads; (c) is the LLM
+decision; (d) executes only on `join`; (e) always logs.
+
+### (a) Discover the pool — Subgraph MCP first, GraphQL fallback
+
+LLM natural-language query via the Subgraph MCP (pool fill %, prior dropouts):
+
+```text
+"Pool 0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd on Arc 5042002:
+ current totalCommitted vs target, participant count, and any DroppedOut events?"
+```
+
+Deterministic fallback when MCP is unavailable — same question as GraphQL:
+
+```graphql
+query PoolStatus($pool: ID!) {
+  pool(id: $pool) {
+    totalCommitted target participantCount settled expired
+    commits { agent amount }
+    dropouts { agent forfeited }
+  }
+}
+# variables: { "pool": "0xc6f9a1559f9a02755ac7ba4865c558b0ed46b4fd" }
+```
+
+Cross-check on-chain (read-only) before deciding:
+
+```ts
+import { getPoolState } from "@jx-nexus/coalition";
+const state = await getPoolState({ publicClient, pool });
+// state: { target, totalCommitted, settled, expired, participantCount }
+```
+
+Also fetch `GET /terms.json` (the on-chain `resourceURI` target) so the LLM
+quotes live terms, and optionally `getPoolMetadata` for `maxParticipants` /
+`resourceURI` / `feedbackCursor`.
+
+### (b) Identity + reputation check — ENS-first, wallet cross-check, graceful fallback
+
+Each seed resolves live before anything else. The runner calls
+`resolveSeedAgents({ sepoliaClient, arcClient, seeds: DEMO_SEED_AGENTS,
+reviewers: [provider, ...committedPeers] })` (Sepolia via the viem `sepolia`
+preset; Arc reads are free log/call reads). Per seed, in seed order:
+
+1. `resolveEnsToAgents({ sepoliaClient, arcClient, name: seed.ensName })`:
+   subname → Arc wallet (`ARC_COIN_TYPE`) → agent ids (`findAgentsByOwner`
+   on `Registered` logs, zero gas).
+2. The resolved Arc wallet **must equal** the seed `wallet`
+   (case-insensitive compare). Mismatch = `skipped` with reason
+   `"arc wallet mismatch for \"<ensName>\": ENS resolves to <actual>,
+   seed expects <expected>"` — the agent never runs on a stranger's identity.
+3. Per agent id: `resolveAgent` (URI + bound wallet) plus
+   `getReputationSummary` over the reviewers, then the dropout scan —
+   `readFeedback` per reviewer per index, failing on any unrevoked entry
+   with `tag1 === "dropout"` and `value < 0`.
+
+```ts
+import { resolveSeedAgents } from "@jx-nexus/coalition";
+
+const resolutions = await resolveSeedAgents({
+  sepoliaClient, arcClient,
+  seeds: DEMO_SEED_AGENTS, // ensName live, wallet cross-check
+  reviewers: [provider, ...committedPeers], // MUST be non-empty (Sybil rule)
+});
+for (const r of resolutions) {
+  if (r.status === "skipped") continue; // reason logged, seed wallet as fallback
+  for (const a of r.agents) {
+    if (a.dropout) continue; // skip: dropout tag from ${a.dropoutClient}
+    // a.agent (resolveAgent) + a.summary (getReputationSummary) feed the gate
+  }
+}
+```
+
+Null handling (never crash, never abort the loop — one missing record does
+not stop the other three):
+
+- No Arc record (`resolveEnsToAgents` returns `null`) → `skipped` with
+  reason `"no Arc record for \"<ensName>\"; falling back to seed wallet
+  <wallet>"`; `fallbackWallet` carries the seed wallet so the runner can
+  proceed on the deterministic fallback and log the reason.
+- Wallet mismatch → `skipped` with the mismatch reason above (identity
+  stays strict even in fallback mode).
+- Zero agent ids for a matching wallet → `resolved` with `agents: []`
+  (no history = pass with reason `"no history"`, same as the legacy rule).
+
+Pass rule (unchanged): `summary.count > 0n` (or zero-history = pass with
+reason `"no history"`) AND no unrevoked `dropout` tag with negative value.
+The legacy direct-`getReputationSummary`-by-`agentId` path remains for
+entries already resolved; the scored path above is now the default first.
+
+### (c) Join / skip gate (deterministic inputs → LLM judgment)
+
+Join IFF **all** hold, else skip with a reason string:
+
+1. `settled === false && expired === false` (from `getPoolState`);
+2. capacity: `wouldExceedTarget(state, 2000000n) === false` **and**
+   `participantCount < maxParticipants` (from `getPoolMetadata`);
+3. reputation passes per (b) — no unrevoked `dropout` tag.
+
+```ts
+import { wouldExceedTarget } from "@jx-nexus/coalition";
+const fits = !wouldExceedTarget(state, 2000000n); // 2000000n = $2.00
+```
+
+Skip reasons are fixed strings, e.g. `"skip: would exceed 10.00 target"`,
+`"skip: pool settled/expired"`, `"skip: maxParticipants reached"`,
+`"skip: dropout tag from <client>"`. A skip never touches the wallet.
+
+### (d) Commit — approve first, then commit (join path only)
+
+Circle wallet skill preconditions (per `plans/circle-agent-kit.md` §§3–4):
+agent follows the `wallet-pay` skill triage before paying (Arc = vanilla path,
+not Gateway), wallet already exists (`wallet-login`) and is funded
+(`wallet-fund`), USDC `0x3600000000000000000000000000000000000000` (6-dec view).
+
+Exact CLI syntax — `--address` is the agent's own seed wallet,
+`--chain ARC-TESTNET` on every call:
+
+```sh
+# 1. approve the pool to pull $2.00 (2000000 atomic, 6-dec view)
+circle wallet execute "approve(address,uint256)" \
+  0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd 2000000 \
+  --contract 0x3600000000000000000000000000000000000000 \
+  --address 0x0427194a9c99599a8bbbcc292b1523be91e4101d \
+  --chain ARC-TESTNET
+
+# 2. commit $2.00 — reverts OverTarget past 10.00 / TooManyParticipants past cap
+circle wallet execute "commit(uint256)" \
+  2000000 \
+  --contract 0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd \
+  --address 0x0427194a9c99599a8bbbcc292b1523be91e4101d \
+  --chain ARC-TESTNET
+```
+
+Substitute `--address` per seed for agent-2/3/4. SDK equivalent (same
+`approve`-then-`commit` order, same cap rule):
+
+```ts
+import { commitToPool, wouldExceedTarget } from "@jx-nexus/coalition";
+if (!wouldExceedTarget(state, 2000000n))
+  await commitToPool({ walletClient, account, pool, amount: 2000000n });
+```
+
+Pool rules honored (`contracts/src/ResourcePool.sol`): cap at target
+(`OverTarget` revert mirrors `wouldExceedTarget`), `maxParticipants` enforced
+in `commit`, `approve` before every `commit`, `settle` callable by anyone but
+only when filled (`totalCommitted >= target`). Deliberate dropout (agent-2,
+live decision only): `dropOut(agentId)` forfeits the stake, writes
+`dropout/-1` feedback, and counts toward the MCP "prior dropouts" narrative.
+
+### (e) Log decision + tx hash (video timestamps)
+
+One JSON line per agent to stdout (and `demo/run-log.jsonl`), in seed order:
+
+```json
+{"t":"2026-09-08T12:00:01Z","agent":"agent-1","wallet":"0x0427194a…","decision":"join","reason":"fill 6.00/10.00 allows +2.00; no dropout tag","amountAtomic":"2000000","approveHash":"0x…","commitHash":"0x…"}
+{"t":"2026-09-08T12:00:20Z","agent":"agent-2","wallet":"0xd1a3c0…","decision":"skip","reason":"skip: dropout tag from 0x…","amountAtomic":"0","approveHash":null,"commitHash":null}
+```
+
+The runner prints `poolFillBefore/After` (from `getPoolState` re-reads) beside
+each line so the video can point at fill % climbing `0 → 2 → … → 8 / 10`.
+
+## 4. How the LLM drives it
+
+Deterministic values in, LLM reasoning out. The runner feeds a fixed prompt
+template; the LLM returns exactly one JSON object — no prose, no tool calls
+of its own (the runner already fetched everything).
+
+### Prompt template
+
+```text
+You are the Coalition demo decider for {agentId} (wallet {wallet}, cpu {cpu}, mem {memMB}MB).
+Share: $2.00 = 2000000 atomic. Pool 0xC6f9…B4fd, target 10.00 USDC (10000000 atomic).
+
+Pool state (getPoolState): totalCommitted={totalCommitted} target={target} settled={settled} expired={expired} participantCount={participantCount}, maxParticipants={maxParticipants}.
+wouldExceedTarget(+2000000) = {wouldExceed}.
+Subgraph MCP: fill {fillPct}% — {mcpSummary}; prior dropouts: {dropouts}.
+Reputation (getReputationSummary over [{clients}]): count={repCount} value={repValue} decimals={repDecimals}; readFeedback flags: {feedbackFlags} (any "dropout"/negative?).
+Terms (GET /terms.json): {termsExcerpt}
+Resale context (fetchQuote/quoteCost, informational only): {quoteExcerpt}
+
+Join IFF pool open AND wouldExceed=false AND capacity remains AND no unrevoked dropout tag.
+Return ONLY this JSON: {"decision":"join|skip","reason":"<short human string>","amountAtomic":"2000000|<0 on skip>"}
+```
+
+### Example filled inputs → outputs
+
+```text
+agent-1 @ empty pool: wouldExceed=false, no dropout tag
+→ {"decision":"join","reason":"fill 0.00/10.00 allows +2.00; no dropout tag","amountAtomic":"2000000"}
+
+agent-4 @ 9.00 committed (headroom fiction): wouldExceed=true
+→ {"decision":"skip","reason":"skip: would exceed 10.00 target","amountAtomic":"0"}
+```
+
+`amountAtomic` echoes the seed (`"2000000"` on join, `"0"` on skip) — the LLM
+never invents amounts. The runner enforces the gate independently: a `join`
+with `wouldExceedTarget === true` is downgraded to `skip` before any wallet
+command, so the LLM can never overfill the pool.
+
+## 5. Resale coda (outside buyer, no commit)
+
+After the 4-agent loop, the held-out buyer `0x7184…` prices spare capacity
+without joining — the §6 Nanopayments beat:
+
+```sh
+curl -s 'http://localhost:8080/quote?seller=0x0427194a9c99599a8bbbcc292b1523be91e4101d'
+circle services search "compute"   # discover-services skill
+circle services pay https://seller.example/compute --address 0x71846352cc198d7f3bfeb677f8631eb84d311329 --chain ARC-TESTNET --max-amount 0.01
+```
+
+SDK form: `fetchQuote({ baseUrl, seller })` then `quoteCost(quote, { mb, cu })`
+for exact bigint pricing. `POST /allocate` (operator key) and `POST /run`
+(agent token) stay out of the funding loop — allocation happens after settle
+via the settle→allocate listener, not inside this flow.
+
+## 6. What this change adds (and does not)
+
+- Adds: `demo/agents.seeds.json` (this doc's §1) + this doc.
+- Does not: run any wallet/chain command; add `app/` Next.js code or
+  `subgraph/` code; invent reputation APIs (only `getReputationSummary` /
+  `readFeedback`); store OTPs, keys, or session tokens (Circle `wallet-login`
+  sessions stay in the operator's live CLI session, never in files).
