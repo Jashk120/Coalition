@@ -5,6 +5,7 @@ import {
   wouldExceedTarget,
 } from "@jx-nexus/coalition";
 import { SHARE_ATOMIC } from "@/lib/constants";
+import { log } from "@/lib/logger";
 import { readPoolState } from "@/lib/pool-state";
 import type { AgentDecision, RunResponse } from "@/lib/types";
 
@@ -17,7 +18,15 @@ export const dynamic = "force-dynamic";
  * flags. No chain writes, no wallet commands — hashes are always null.
  */
 export async function POST(): Promise<NextResponse<RunResponse>> {
+  const started = Date.now();
   const pool = await readPoolState();
+  log("info", "agents.run.start", {
+    route: "POST /api/agents/run",
+    agents: DEMO_SEED_AGENTS.length,
+    poolSource: pool.source,
+    totalCommitted: pool.view.totalCommitted,
+    target: pool.view.target,
+  });
 
   const target = BigInt(pool.view.target);
   let running = BigInt(pool.view.totalCommitted);
@@ -75,8 +84,28 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
     },
   );
 
+  for (const d of decisions) {
+    log("debug", "agents.run.decision", {
+      agent: d.agent,
+      decision: d.decision,
+      reason: d.reason,
+      amountAtomic: d.amountAtomic,
+      poolFillBefore: d.poolFillBefore,
+      poolFillAfter: d.poolFillAfter,
+    });
+  }
+
   const now = new Date();
   const stamp = now.toISOString().slice(0, 19).replaceAll("-", "").replaceAll(":", "").replace("T", "-");
+
+  const joins = decisions.filter((d) => d.decision === "join").length;
+  log("info", "agents.run.complete", {
+    route: "POST /api/agents/run",
+    runId: `demo-${stamp}-001`,
+    joins,
+    skips: decisions.length - joins,
+    durationMs: Date.now() - started,
+  });
 
   return NextResponse.json({
     ok: true,

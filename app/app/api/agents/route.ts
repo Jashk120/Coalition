@@ -6,6 +6,7 @@ import {
 } from "@jx-nexus/coalition";
 import { arcPublicClient, sepoliaPublicClient } from "@/lib/chain";
 import { CHAIN_ID, OUTSIDE_BUYER, POOL_ADDRESS, SEED_META } from "@/lib/constants";
+import { log, logTimed } from "@/lib/logger";
 import { readPoolState } from "@/lib/pool-state";
 import type { AgentsResponse, ResolutionView } from "@/lib/types";
 
@@ -45,15 +46,20 @@ export async function GET(): Promise<NextResponse<AgentsResponse>> {
 
   let resolutions: readonly ResolutionView[];
   try {
-    const live = await withTimeout(
-      resolveSeedAgents({
-        sepoliaClient: sepoliaPublicClient(),
-        arcClient: arcPublicClient(),
-        seeds: DEMO_SEED_AGENTS,
-        reviewers,
-      }),
-      25_000,
-      "resolveSeedAgents",
+    const live = await logTimed(
+      "agents.resolve",
+      { route: "GET /api/agents", agents: DEMO_SEED_AGENTS.length },
+      () =>
+        withTimeout(
+          resolveSeedAgents({
+            sepoliaClient: sepoliaPublicClient(),
+            arcClient: arcPublicClient(),
+            seeds: DEMO_SEED_AGENTS,
+            reviewers,
+          }),
+          25_000,
+          "resolveSeedAgents",
+        ),
     );
     resolutions = live.map((entry): ResolutionView => {
       if (entry.status === "resolved") {
@@ -73,6 +79,10 @@ export async function GET(): Promise<NextResponse<AgentsResponse>> {
     });
   } catch (error) {
     const reason = `live resolution unavailable (${errorMessage(error)}); showing seed fallbacks`;
+    log("warn", "agents.resolve.fallback", {
+      route: "GET /api/agents",
+      reason,
+    });
     resolutions = SEED_META.map(
       (seed): ResolutionView => ({
         seedId: seed.id,
@@ -84,6 +94,14 @@ export async function GET(): Promise<NextResponse<AgentsResponse>> {
   }
 
   const pool = await readPoolState();
+  const resolved = resolutions.filter((r) => r.status === "resolved").length;
+  log("info", "agents.read", {
+    route: "GET /api/agents",
+    resolved,
+    skipped: resolutions.length - resolved,
+    poolSource: pool.source,
+    ...(pool.note === undefined ? {} : { note: pool.note }),
+  });
 
   return NextResponse.json({
     ok: true,

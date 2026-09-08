@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchQuote } from "@jx-nexus/coalition";
+import { log } from "@/lib/logger";
 import { orchestratorBaseUrl } from "@/lib/pool-state";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,7 @@ function withBigints(value: unknown): string {
 export async function GET(request: Request): Promise<Response> {
   const seller = new URL(request.url).searchParams.get("seller");
   if (seller === null || seller === "") {
+    log("warn", "quote.bad_request", { route: "GET /api/quote" });
     return NextResponse.json({ ok: false, error: "missing ?seller=0x…" }, { status: 400 });
   }
   try {
@@ -30,6 +32,11 @@ export async function GET(request: Request): Promise<Response> {
       headers: { "content-type": "application/json" },
     });
   } catch (error) {
+    log("warn", "quote.unavailable", {
+      route: "GET /api/quote",
+      seller,
+      error: errorMessage(error),
+    });
     return NextResponse.json(
       { ok: false, error: `quote unavailable: ${errorMessage(error)}` },
       { status: 502 },

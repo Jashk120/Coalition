@@ -30,3 +30,12 @@ subgraph endpoint/API key are server-only and stay in route handlers.
   `wouldExceedTarget`; returns `AgentDecision` lines with null hashes.
 - `GET /api/quote?seller=0x…` — resale quote via SDK `fetchQuote`.
 - `GET /api/terms` — orchestrator `/terms.json` relay.
+
+## Logging
+
+Route handlers emit JSON lines to stdout (`app/lib/logger.ts`, no
+dependencies): `agents.run.start/complete/decision`, `agents.resolve` (+
+`agents.resolve.fallback` on degrade), `agents.read`, `quote.*`,
+`terms.*`. Only public demo fields (counts, addresses, decisions,
+durations) — never tokens, keys, or session material. Slow steps log at
+`warn` automatically via `logTimed`.
