@@ -1,5 +1,5 @@
 # Coalition orchestrator — VPS deploy stack.
-# Box only pulls: push to main builds ghcr.io/<owner>/Coalition-orchestrator
+# Box only pulls: push to main builds ghcr.io/<owner>/coalition-orchestrator
 # via .github/workflows/orchestrator.yml, Watchtower below auto-updates it.
 # Caddy terminates TLS (required: bearer tokens over http get stolen).
 #
@@ -13,8 +13,8 @@ services:
     image: ${IMAGE:-ghcr.io/jashk120/coalition-orchestrator:latest}
     env_file:
       - .env
-    expose:
-      - "8080"
+    ports:
+      - "127.0.0.1:8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
