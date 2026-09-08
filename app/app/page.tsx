@@ -7,6 +7,8 @@ import type {
   ActivityResponse,
   AgentDecision,
   AgentsResponse,
+  FundResponse,
+  FundStep,
   ResolutionView,
   RunResponse,
 } from "@/lib/types";
@@ -104,6 +106,9 @@ export default function DashboardPage() {
   const [agentsError, setAgentsError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [funding, setFunding] = useState(false);
+  const [fundError, setFundError] = useState<string | null>(null);
+  const [fundSteps, setFundSteps] = useState<readonly FundStep[]>([]);
   const [log, setLog] = useState<readonly AgentDecision[]>([]);
   const [quotes, setQuotes] = useState<readonly AgentQuoteState[]>([]);
   const [activity, setActivity] = useState<ActivityState>({ status: "loading" });
@@ -125,6 +130,28 @@ export default function DashboardPage() {
       );
     }
   }, []);
+
+  const fundDemo = useCallback(async () => {
+    setFunding(true);
+    setFundError(null);
+    try {
+      const response = await fetch("/api/agents/fund", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const body = (await parseJson(response)) as FundResponse;
+      if (body.ok) {
+        setFundSteps(body.steps);
+        await loadAgents();
+      } else {
+        setFundError(body.error);
+      }
+    } catch (error) {
+      setFundError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFunding(false);
+    }
+  }, [loadAgents]);
 
   useEffect(() => {
     void loadAgents();
@@ -381,6 +408,80 @@ export default function DashboardPage() {
           <div className="mono">{OUTSIDE_BUYER.ensName}</div>
         </section>
       </div>
+
+      <section className="card" aria-label="On-chain funding">
+        <h2>On-chain funding</h2>
+        <p className="fill-label">
+          Real approve+commit via Circle developer-controlled wallets; needs
+          CIRCLE_* server env; no-op with clear error when unconfigured.
+        </p>
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void fundDemo()}
+          disabled={funding}
+        >
+          {funding ? "Funding…" : "Fund on-chain"}
+        </button>
+        {fundError !== null ? (
+          <div className="state state-error" role="alert">
+            Fund failed: {fundError}
+          </div>
+        ) : null}
+        {fundSteps.length === 0 ? (
+          <div className="state">No funded steps</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <tbody>
+                {fundSteps.map((step) => (
+                  <tr key={step.walletId}>
+                    <td className="mono">{shortAddress(step.walletId)}</td>
+                    <td>
+                      <span
+                        className={
+                          step.decision === "funded"
+                            ? "pill pill-ok"
+                            : step.decision === "skipped"
+                              ? "pill pill-warn"
+                              : "state state-error"
+                        }
+                      >
+                        {step.decision}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="fill-label">{step.reason}</span>
+                      {step.approveTxHash !== null ? (
+                        <div className="mono">
+                          <a
+                            href={`${EXPLORER_URL}/tx/${step.approveTxHash}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            approve {shortAddress(step.approveTxHash)}
+                          </a>
+                        </div>
+                      ) : null}
+                      {step.commitTxHash !== null ? (
+                        <div className="mono">
+                          <a
+                            href={`${EXPLORER_URL}/tx/${step.commitTxHash}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            commit {shortAddress(step.commitTxHash)}
+                          </a>
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <section className="card" aria-label="Decision log">
         <h2>Decision log</h2>

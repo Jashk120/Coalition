@@ -28,6 +28,9 @@ subgraph endpoint/API key are server-only and stay in route handlers.
   fallback) plus pool state (subgraph first, chain `getPoolState` fallback).
 - `POST /api/agents/run` — sequential dry-run decisions gated by
   `wouldExceedTarget`; returns `AgentDecision` lines with null hashes.
+- `POST /api/agents/fund` — sequential headless on-chain funding via Circle
+  Developer-Controlled Wallets (USDC approve + pool commit per wallet);
+  returns `FundStep` lines with on-chain hashes, 503 without `CIRCLE_*` env.
 - `GET /api/activity` — pool `Committed` + `Settled` events (chunked log scan
   from the pool deploy block), newest first; empty before the first commit.
 - `GET /api/quote?seller=0x…` — resale quote via SDK `fetchQuote`.

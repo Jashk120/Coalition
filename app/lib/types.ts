@@ -85,3 +85,6 @@ export type ActivityResponse =
       readonly events: readonly ActivityEvent[];
     }
   | { readonly ok: false; readonly error: string };
+
+export type FundStep = { readonly walletId: string; readonly decision: "funded" | "skipped" | "failed"; readonly reason: string; readonly approveTxHash: string | null; readonly commitTxHash: string | null };
+export type FundResponse = { readonly ok: true; readonly pool: string; readonly steps: readonly FundStep[] } | { readonly ok: false; readonly error: string };
