@@ -90,15 +90,22 @@ type apiError struct {
 }
 
 func (b *DockerBackend) do(ctx context.Context, method, path string, body []byte) (int, []byte, error) {
-	var rdr io.Reader
-	if body != nil {
-		rdr = bytes.NewReader(body)
-	}
 	ver := b.version
 	if ver == "" {
 		ver = engineVersion
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://docker/"+ver+path, rdr)
+	return b.doRaw(ctx, method, "/"+ver+path, body)
+}
+
+// doRaw issues a request with no API-version prefix. Handshake endpoints
+// (/_ping, /version) must use this: a daemon older than engineVersion
+// rejects even the probe when it carries the pinned prefix.
+func (b *DockerBackend) doRaw(ctx context.Context, method, path string, body []byte) (int, []byte, error) {
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://docker"+path, rdr)
 	if err != nil {
 		return 0, nil, fmt.Errorf("build request: %w", err)
 	}
@@ -134,7 +141,7 @@ func daemonMessage(out []byte) string {
 // version down when the daemon reports a max below engineVersion (e.g. older
 // distro daemons). Without this the pinned version is rejected outright.
 func (b *DockerBackend) Ping(ctx context.Context) error {
-	status, out, err := b.do(ctx, http.MethodGet, "/_ping", nil)
+	status, out, err := b.doRaw(ctx, http.MethodGet, "/_ping", nil)
 	if err != nil {
 		return err
 	}
@@ -149,10 +156,7 @@ func (b *DockerBackend) Ping(ctx context.Context) error {
 
 // serverAPIVersion reads the daemon max via the unversioned /version endpoint.
 func (b *DockerBackend) serverAPIVersion(ctx context.Context) (string, error) {
-	ver := b.version
-	b.version = engineVersion
-	defer func() { b.version = ver }()
-	status, out, err := b.do(ctx, http.MethodGet, "/version", nil)
+	status, out, err := b.doRaw(ctx, http.MethodGet, "/version", nil)
 	if err != nil {
 		return "", err
 	}
