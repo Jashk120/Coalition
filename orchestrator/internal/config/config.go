@@ -48,6 +48,7 @@ type Config struct {
 	PollInterval    time.Duration
 	Confirmations   int64
 	ReaperInterval  time.Duration
+	WorkerInterval  time.Duration
 	RateLimitRPS    float64
 	RateLimitBurst  int64
 	PublicBaseURL   string
@@ -199,6 +200,16 @@ func loadFrom(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, fmt.Errorf("REAPER_INTERVAL=%q: %w", reaperRaw, ErrInvalidValue)
 	}
 	cfg.ReaperInterval = reaper
+
+	// WORKER_INTERVAL drives the post-settle demo burn: each tick every live
+	// container execs a short load so usage climbs without hand-run curls.
+	// Zero disables it; negative or unparsable is fatal like every duration.
+	workerRaw := get("WORKER_INTERVAL", "30s")
+	worker, err := time.ParseDuration(workerRaw)
+	if err != nil || worker < 0 {
+		return Config{}, fmt.Errorf("WORKER_INTERVAL=%q: %w", workerRaw, ErrInvalidValue)
+	}
+	cfg.WorkerInterval = worker
 
 	rpsRaw := get("RATE_LIMIT_RPS", "20")
 	rps, err := strconv.ParseFloat(rpsRaw, 64)

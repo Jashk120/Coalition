@@ -55,6 +55,7 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	srv.StartReaper(ctx)
+	srv.StartWorker(ctx)
 
 	done := make(chan error, 2)
 	procs := 1

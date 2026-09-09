@@ -46,6 +46,7 @@ enforcement that is not there.
 | `POLL_INTERVAL` | `5s` | no | Settle poll cadence |
 | `CONFIRMATIONS` | `1` | no | Minimum confirmations for settle logs and transfer receipts alike |
 | `REAPER_INTERVAL` | `10s` | no | Background reaper tick: kills containers whose billed usage plus in-flight estimate exceeds budget |
+| `WORKER_INTERVAL` | `30s` | no | Post-settle demo burn tick: every live container execs a short metered load so usage climbs on its own. `0s` disables; malformed values are fatal |
 | `RATE_LIMIT_RPS` | `20` | no | Per-IP token-bucket refill rate (requests/second). Malformed values are fatal — no silent defaults |
 | `RATE_LIMIT_BURST` | `40` | no | Per-IP token-bucket capacity. Malformed values are fatal — no silent defaults |
 | `PUBLIC_BASE_URL` | empty (request-derived) | no | Canonical origin (e.g. `https://pool.example`) for `/terms.json` `self` and quote `termsURI`. Empty keeps request-derived behavior gated by `TRUST_PROXY` |
