@@ -6,7 +6,6 @@ import { EXPLORER_URL, OUTSIDE_BUYER, SEED_META } from "@/lib/constants";
 import type {
   ActivityEvent,
   ActivityResponse,
-  AgentDecision,
   AgentsResponse,
   FreePoolResponse,
   FundResponse,
@@ -16,7 +15,6 @@ import type {
   FundStep,
   ResolutionView,
   RoundView,
-  RunResponse,
 } from "@/lib/types";
 
 type QuoteState =
@@ -141,8 +139,6 @@ export default function DashboardPage() {
     { readonly ok: true }
   > | null>(null);
   const [agentsError, setAgentsError] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const [runError, setRunError] = useState<string | null>(null);
   const [funding, setFunding] = useState(false);
   const [fundError, setFundError] = useState<string | null>(null);
   const [fundSteps, setFundSteps] = useState<readonly FundStep[]>([]);
@@ -154,7 +150,6 @@ export default function DashboardPage() {
   const [freeing, setFreeing] = useState(false);
   const [freeError, setFreeError] = useState<string | null>(null);
   const [freeResult, setFreeResult] = useState<string | null>(null);
-  const [log, setLog] = useState<readonly AgentDecision[]>([]);
   const [quotes, setQuotes] = useState<readonly AgentQuoteState[]>([]);
   const [activity, setActivity] = useState<ActivityState>({ status: "loading" });
   const [terms, setTerms] = useState<TermsState>({ status: "loading" });
@@ -338,25 +333,6 @@ export default function DashboardPage() {
     };
   }, [loadActivity]);
 
-  const runDemo = useCallback(async () => {
-    setRunning(true);
-    setRunError(null);
-    try {
-      const response = await fetch("/api/agents/run", { method: "POST" });
-      const body = (await parseJson(response)) as RunResponse;
-      if (body.ok) {
-        setLog((previous) => [...previous, ...body.decisions]);
-        await loadAgents();
-      } else {
-        setRunError(body.error);
-      }
-    } catch (error) {
-      setRunError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRunning(false);
-    }
-  }, [loadAgents]);
-
   const freePool = useCallback(async () => {
     if (
       !window.confirm(
@@ -393,8 +369,8 @@ export default function DashboardPage() {
       <header>
         <h1>Coalition — Pool Dashboard</h1>
         <p>
-          Deterministic 4-agent funding loop on Arc 5042002. Reads and dry-run
-          decisions only — no on-chain writes from this UI.
+          4-agent funding demo on Arc 5042002. Fund on-chain writes real
+          approve+commit transactions via Circle wallets.
         </p>
       </header>
 
@@ -686,23 +662,24 @@ export default function DashboardPage() {
       </section>
 
       <div className="grid-two">
-        <section className="card" aria-label="Demo loop trigger">
-          <h2>Demo loop</h2>
+        <section className="card" aria-label="Demo funding">
+          <h2>Demo — fund on-chain</h2>
           <p className="fill-label">
-            Runs the 4 seeds sequentially as a dry run (wouldExceedTarget gate,
-            null hashes). Each decision appends to the log below.
+            Runs the 4 agents sequentially: live round gate, then real USDC
+            approve+commit per Circle wallet. Each step appends below with
+            on-chain hashes.
           </p>
           <button
             className="trigger"
             type="button"
-            onClick={() => void runDemo()}
-            disabled={running}
+            onClick={() => void fundDemo()}
+            disabled={funding}
           >
-            {running ? "Running…" : "Run demo loop"}
+            {funding ? "Funding…" : "Fund on-chain"}
           </button>
-          {runError !== null ? (
+          {fundError !== null ? (
             <div className="state state-error" role="alert">
-              Run failed: {runError}
+              Fund failed: {fundError}
             </div>
           ) : null}
         </section>
@@ -742,25 +719,11 @@ export default function DashboardPage() {
         ) : null}
       </section>
 
-      <section className="card" aria-label="On-chain funding">
-        <h2>On-chain funding</h2>
+      <section className="card" aria-label="Funding results">
+        <h2>Funding results</h2>
         <p className="fill-label">
-          Real approve+commit via Circle developer-controlled wallets; needs
-          CIRCLE_* server env; no-op with clear error when unconfigured.
+          Steps from the last Fund on-chain run; needs CIRCLE_* server env.
         </p>
-        <button
-          className="trigger"
-          type="button"
-          onClick={() => void fundDemo()}
-          disabled={funding}
-        >
-          {funding ? "Funding…" : "Fund on-chain"}
-        </button>
-        {fundError !== null ? (
-          <div className="state state-error" role="alert">
-            Fund failed: {fundError}
-          </div>
-        ) : null}
         <p className="fill-label">
           Free pool closes a finished round and opens the next one for a
           fresh test run (provider wallet required). Refused with a
@@ -856,26 +819,6 @@ export default function DashboardPage() {
                 ))}
               </tbody>
             </table>
-          </div>
-        )}
-      </section>
-
-      <section className="card" aria-label="Decision log">
-        <h2>Decision log</h2>
-        {log.length === 0 ? (
-          <div className="state">
-            No decisions yet — press “Run demo loop” to append AgentDecision
-            lines.
-          </div>
-        ) : (
-          <div className="log" role="log" aria-live="polite">
-            {log
-              .map(
-                (entry) =>
-                  `${entry.agent} ${entry.decision} ${entry.amountAtomic} ` +
-                  `fill ${entry.poolFillBefore}→${entry.poolFillAfter} :: ${entry.reason}`,
-              )
-              .join("\n")}
           </div>
         )}
       </section>
