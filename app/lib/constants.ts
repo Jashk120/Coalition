@@ -33,7 +33,7 @@ export const TARGET_ATOMIC = 10000000n;
 export const POOL_DEPLOY_BLOCK: bigint = (() => {
   const raw = process.env["POOL_DEPLOY_BLOCK"];
   if (raw !== undefined && raw !== "" && /^\d+$/.test(raw)) return BigInt(raw);
-  return 61053443n;
+  return 61221987n;
 })();
 
 export const EXPLORER_URL =

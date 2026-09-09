@@ -1,6 +1,6 @@
 # Coalition ResourcePool subgraph — Arc testnet (chain 5042002).
 #
-# Pool: 0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd
+# Pool: 0x8b9f38c7B005Dd67203e27240F45335a9e64F692
 # Pool state at scaffold time: target 10 USDC (10000000 atomic, 6-dec),
 # totalCommitted 0, settled false.
 #
@@ -21,13 +21,13 @@ dataSources:
     # startBlock, ABI, and handlers below stay the same.
     network: arc-testnet
     source:
-      address: "0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd"
+      address: "0x8b9f38c7B005Dd67203e27240F45335a9e64F692"
       abi: ResourcePool
       # Arc testnet latest was 61057595 at scaffold time (2026-09-08);
       # startBlock is latest minus 1000 as a safety margin. Refresh before
       # deploy if the pool predates this block:
       #   cast block-number --rpc-url https://rpc.testnet.arc.network
-      startBlock: 61056595
+      startBlock: 61221987
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.9
