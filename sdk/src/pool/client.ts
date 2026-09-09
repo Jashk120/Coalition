@@ -312,6 +312,23 @@ export async function getCurrentRoundId(
   });
 }
 
+export type GetCommittedParams = GetPoolStateParams & {
+  readonly roundId: bigint;
+  readonly wallet: Address;
+};
+
+/** Read one wallet's committed amount in a round (0 when it never funded). */
+export async function getCommitted(
+  params: GetCommittedParams,
+): Promise<bigint> {
+  return params.publicClient.readContract({
+    address: params.pool,
+    abi: resourcePoolAbi,
+    functionName: "committed",
+    args: [params.roundId, params.wallet],
+  });
+}
+
 /**
  * True when committing `amount` on top of `state` would pass the target.
  * Check before commitToPool — the contract caps over-commit at targetAmount.

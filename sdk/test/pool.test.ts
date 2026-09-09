@@ -8,6 +8,7 @@ import {
   commitToPool,
   dropOut,
   finalizeExpired,
+  getCommitted,
   getCurrentRoundId,
   getPoolMetadata,
   getPoolState,
@@ -426,5 +427,35 @@ describe("getCurrentRoundId", () => {
 
     // Then: the mocked id comes back
     expect(roundId).toBe(2n);
+  });
+});
+
+describe("getCommitted", () => {
+  it("reads one wallet's committed amount in a round", async () => {
+    // Given: a mocked committed(roundId, wallet) view
+    const selector = toFunctionSelector("committed(uint256,address)");
+    const publicClient = createPublicClient({
+      chain: ARC_TESTNET,
+      transport: custom({
+        request: async ({ method, params }) => {
+          if (method === "eth_chainId") return "0x4cef52";
+          expect(method).toBe("eth_call");
+          const data = (params as [{ readonly data: `0x${string}` }])[0].data;
+          expect(data.startsWith(selector)).toBe(true);
+          return encodeAbiParameters([{ type: "uint256" }], [2_500_000n]);
+        },
+      }),
+    });
+
+    // When: reading the wallet's committed amount
+    const committed = await getCommitted({
+      publicClient,
+      pool: POOL,
+      roundId: 2n,
+      wallet: OWNER,
+    });
+
+    // Then: the mocked amount comes back
+    expect(committed).toBe(2_500_000n);
   });
 });
