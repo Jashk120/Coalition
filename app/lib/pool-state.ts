@@ -1,6 +1,8 @@
 import { parseEventLogs } from "viem";
+import type { Address } from "viem";
 import {
   createGraphClient,
+  getCommitted,
   getCurrentRoundId,
   getPoolFill,
   getPoolState,
@@ -256,6 +258,31 @@ export async function readCurrentRound(): Promise<RoundReadout> {
         note: `${note}; legacy read failed: ${errorMessage(legacyError)}`,
       };
     }
+  }
+}
+
+/**
+ * One wallet's committed amount in a round. Null when the chain read
+ * fails — callers treat null as unknown and fund as before, so a
+ * throttled RPC can never block funding, only skip the dedupe guard.
+ */
+export async function readCommitted(
+  roundId: bigint,
+  wallet: Address,
+): Promise<bigint | null> {
+  try {
+    return await withTimeout(
+      getCommitted({
+        publicClient: arcPublicClient(),
+        pool: POOL_ADDRESS,
+        roundId,
+        wallet,
+      }),
+      10_000,
+      "chain getCommitted",
+    );
+  } catch {
+    return null;
   }
 }
 

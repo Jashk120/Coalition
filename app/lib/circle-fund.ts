@@ -66,6 +66,24 @@ export function createCircleClient(
   return initiateDeveloperControlledWalletsClient({ apiKey, entitySecret });
 }
 
+/**
+ * Resolve a Circle wallet id to its on-chain address. Null when the
+ * lookup fails — callers treat null as unknown and fund as before,
+ * never as a zero address.
+ */
+export async function getWalletAddress(
+  client: CircleClient,
+  walletId: string,
+): Promise<string | null> {
+  try {
+    const fetched = await client.getWallet({ id: walletId });
+    const address = fetched.data?.wallet?.address;
+    return address === undefined || address === "" ? null : address;
+  } catch {
+    return null;
+  }
+}
+
 export type ContractExecutionResult =
   | { readonly ok: true; readonly txHash: string }
   | { readonly ok: false; readonly error: string };
