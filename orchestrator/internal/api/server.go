@@ -67,6 +67,7 @@ func NewServer(cfg config.Config, ledger *store.Store, be backend.ContainerBacke
 	s.mux.HandleFunc("POST /run", s.handleRun)
 	s.mux.HandleFunc("GET /terms.json", s.handleTerms)
 	s.mux.HandleFunc("GET /quote", s.handleQuote)
+	s.mux.HandleFunc("GET /usage", s.handleUsage)
 	s.mux.HandleFunc("POST /transfer-quota", s.handleTransfer)
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	return s, nil
