@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
+import type { Address } from "viem";
 import { fromAtomicUsdc, wouldExceedTarget } from "@jx-nexus/coalition";
 import { POOL_ADDRESS, SHARE_ATOMIC } from "@/lib/constants";
 import {
   USDC_ADDRESS,
   createCircleClient,
   executeContractAndWait,
+  getWalletAddress,
   readCircleEnv,
 } from "@/lib/circle-fund";
 import { log } from "@/lib/logger";
-import { readCurrentRound } from "@/lib/pool-state";
+import { readCommitted, readCurrentRound } from "@/lib/pool-state";
 import type { FundResponse, FundStep } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -96,6 +98,31 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             reason: step.reason,
           });
           continue;
+        }
+
+        const walletAddress = await getWalletAddress(client, walletId);
+        if (walletAddress !== null) {
+          const committed = await readCommitted(
+            BigInt(roundId),
+            walletAddress as Address,
+          );
+          if (committed !== null && committed > 0n) {
+            const step: FundStep = {
+              walletId,
+              decision: "skipped",
+              reason: `skip: already funded ${fromAtomicUsdc(committed)} USDC in round ${roundId}`,
+              roundId,
+              approveTxHash: null,
+              commitTxHash: null,
+            };
+            steps.push(step);
+            log("info", "agents.fund.step", {
+              walletId,
+              decision: step.decision,
+              reason: step.reason,
+            });
+            continue;
+          }
         }
 
         const approve = await executeContractAndWait(client, {
