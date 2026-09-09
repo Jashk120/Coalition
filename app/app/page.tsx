@@ -1,13 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { DEFAULT_IDENTITY_REGISTRY } from "@jx-nexus/coalition";
 import { EXPLORER_URL, OUTSIDE_BUYER, SEED_META } from "@/lib/constants";
 import type {
   ActivityEvent,
   ActivityResponse,
   AgentDecision,
   AgentsResponse,
+  FreePoolResponse,
   FundResponse,
+  NamespacesResponse,
+  NamespaceView,
+  RotateResponse,
   FundStep,
   ResolutionView,
   RoundView,
@@ -55,6 +60,8 @@ type QuotePayload =
 type TermsPayload =
   | { readonly ok: true; readonly terms: unknown }
   | { readonly ok: false; readonly error: string };
+
+const SEPOLIA_EXPLORER_URL = "https://sepolia.etherscan.io";
 
 function shortAddress(address: string): string {
   return address.length > 12
@@ -139,10 +146,22 @@ export default function DashboardPage() {
   const [funding, setFunding] = useState(false);
   const [fundError, setFundError] = useState<string | null>(null);
   const [fundSteps, setFundSteps] = useState<readonly FundStep[]>([]);
+  const [rotating, setRotating] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
+  const [rotateResult, setRotateResult] = useState<
+    Extract<RotateResponse, { readonly ok: true }>["result"] | null
+  >(null);
+  const [freeing, setFreeing] = useState(false);
+  const [freeError, setFreeError] = useState<string | null>(null);
+  const [freeResult, setFreeResult] = useState<string | null>(null);
   const [log, setLog] = useState<readonly AgentDecision[]>([]);
   const [quotes, setQuotes] = useState<readonly AgentQuoteState[]>([]);
   const [activity, setActivity] = useState<ActivityState>({ status: "loading" });
   const [terms, setTerms] = useState<TermsState>({ status: "loading" });
+  const [namespaces, setNamespaces] = useState<readonly NamespaceView[] | null>(
+    null,
+  );
+  const [namespacesError, setNamespacesError] = useState<string | null>(null);
 
   const loadAgents = useCallback(async () => {
     try {
@@ -183,9 +202,70 @@ export default function DashboardPage() {
     }
   }, [loadAgents]);
 
+  const rotateDemo = useCallback(async () => {
+    setRotating(true);
+    setRotateError(null);
+    try {
+      const response = await fetch("/api/agents/rotate", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const body = (await parseJson(response)) as RotateResponse;
+      if (body.ok) {
+        setRotateResult(body.result);
+        setFundSteps([]);
+        await loadAgents();
+      } else {
+        setRotateError(body.error);
+      }
+    } catch (error) {
+      setRotateError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRotating(false);
+    }
+  }, [loadAgents]);
+
   useEffect(() => {
     void loadAgents();
   }, [loadAgents]);
+
+  const loadNamespaces = useCallback(async () => {
+    try {
+      const response = await fetch("/api/ens/namespaces", { cache: "no-store" });
+      const body = (await parseJson(response)) as NamespacesResponse;
+      if (body.ok) {
+        setNamespaces(body.namespaces);
+        setNamespacesError(null);
+      } else {
+        setNamespacesError(body.error);
+      }
+    } catch (error) {
+      setNamespacesError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadNamespaces();
+  }, [loadNamespaces]);
+
+  const loadActivity = useCallback(async () => {
+    try {
+      const activityRes = await fetch("/api/activity", { cache: "no-store" });
+      const activityBody = (await parseJson(activityRes)) as ActivityResponse;
+      if (activityBody.ok) {
+        setActivity({ status: "ready", events: activityBody.events });
+      } else {
+        setActivity({ status: "error", message: activityBody.error });
+      }
+    } catch (error) {
+      setActivity({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -228,25 +308,6 @@ export default function DashboardPage() {
       );
       if (!cancelled) setQuotes(rows);
     }
-    async function loadActivity(): Promise<void> {
-      try {
-        const activityRes = await fetch("/api/activity", { cache: "no-store" });
-        const activityBody = (await parseJson(activityRes)) as ActivityResponse;
-        if (cancelled) return;
-        if (activityBody.ok) {
-          setActivity({ status: "ready", events: activityBody.events });
-        } else {
-          setActivity({ status: "error", message: activityBody.error });
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setActivity({
-            status: "error",
-            message: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-    }
     async function loadTerms(): Promise<void> {
       try {
         const termsRes = await fetch("/api/terms", { cache: "no-store" });
@@ -275,7 +336,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadActivity]);
 
   const runDemo = useCallback(async () => {
     setRunning(true);
@@ -295,6 +356,37 @@ export default function DashboardPage() {
       setRunning(false);
     }
   }, [loadAgents]);
+
+  const freePool = useCallback(async () => {
+    if (
+      !window.confirm(
+        "Free the orchestrator container pool? Running containers will be stopped so the pool can be reused for the next test.",
+      )
+    ) {
+      return;
+    }
+    setFreeing(true);
+    setFreeError(null);
+    setFreeResult(null);
+    try {
+      const response = await fetch("/api/pools/free", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const body = (await parseJson(response)) as FreePoolResponse;
+      if (body.ok) {
+        setFreeResult(JSON.stringify(body.freed) ?? "ok");
+        await loadAgents();
+        await loadActivity();
+      } else {
+        setFreeError(body.error);
+      }
+    } catch (error) {
+      setFreeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFreeing(false);
+    }
+  }, [loadAgents, loadActivity]);
 
   return (
     <main>
@@ -511,6 +603,88 @@ export default function DashboardPage() {
         )}
       </section>
 
+      <section className="card" aria-label="Agent namespaces">
+        <h2>Agent namespaces</h2>
+        <p className="fill-label">
+          Each seed subname owns its Permissioned Resolver data on Sepolia and
+          links to ERC-8004 agent ids on Arc. Resolver and wallet are read
+          live per request — never cached, never hardcoded.
+        </p>
+        {namespacesError !== null ? (
+          <div className="state state-error" role="alert">
+            Namespaces unavailable: {namespacesError}
+          </div>
+        ) : namespaces === null ? (
+          <div className="state">Resolving subname namespaces…</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Subname</th>
+                  <th>Resolver (Sepolia)</th>
+                  <th>Arc wallet</th>
+                  <th>ERC-8004 agent ids</th>
+                </tr>
+              </thead>
+              <tbody>
+                {namespaces.map((entry) => (
+                  <tr key={entry.seedId}>
+                    <td className="mono">{entry.name}</td>
+                    <td className="mono">
+                      {entry.resolver === null ? (
+                        <span className="pill pill-warn">no resolver</span>
+                      ) : (
+                        <a
+                          href={`${SEPOLIA_EXPLORER_URL}/address/${entry.resolver}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {shortAddress(entry.resolver)}
+                        </a>
+                      )}
+                    </td>
+                    <td className="mono">
+                      {entry.arcWallet === null ? (
+                        <span className="pill pill-warn">no Arc record</span>
+                      ) : (
+                        <a
+                          href={`${EXPLORER_URL}/address/${entry.arcWallet}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {shortAddress(entry.arcWallet)}
+                        </a>
+                      )}
+                    </td>
+                    <td className="mono">
+                      {entry.agentIds.length === 0 ? (
+                        <span className="pill">none</span>
+                      ) : (
+                        entry.agentIds.map((id) => (
+                          <span key={id}>
+                            <a
+                              href={`${EXPLORER_URL}/token/${DEFAULT_IDENTITY_REGISTRY}?a=${id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              #{id}
+                            </a>{" "}
+                          </span>
+                        ))
+                      )}
+                      {entry.note !== undefined ? (
+                        <div className="mono">{entry.note}</div>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <div className="grid-two">
         <section className="card" aria-label="Demo loop trigger">
           <h2>Demo loop</h2>
@@ -544,6 +718,30 @@ export default function DashboardPage() {
         </section>
       </div>
 
+      <section className="card" aria-label="Container pool">
+        <h2>Container pool</h2>
+        <p className="fill-label">
+          Resets the orchestrator container pool via POST /free-pool so judges
+          can reuse the same pool for the next test run.
+        </p>
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void freePool()}
+          disabled={freeing}
+        >
+          {freeing ? "Freeing…" : "Free Pool"}
+        </button>
+        {freeError !== null ? (
+          <div className="state state-error" role="alert">
+            Free pool failed: {freeError}
+          </div>
+        ) : null}
+        {freeResult !== null ? (
+          <div className="state">Pool freed: {freeResult}</div>
+        ) : null}
+      </section>
+
       <section className="card" aria-label="On-chain funding">
         <h2>On-chain funding</h2>
         <p className="fill-label">
@@ -561,6 +759,50 @@ export default function DashboardPage() {
         {fundError !== null ? (
           <div className="state state-error" role="alert">
             Fund failed: {fundError}
+          </div>
+        ) : null}
+        <p className="fill-label">
+          Free pool closes a finished round and opens the next one for a
+          fresh test run (provider wallet required). Refused with a
+          countdown while a round is still fundable.
+        </p>
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void rotateDemo()}
+          disabled={rotating}
+        >
+          {rotating ? "Freeing…" : "Free pool"}
+        </button>
+        {rotateError !== null ? (
+          <div className="state state-error" role="alert">
+            Rotate failed: {rotateError}
+          </div>
+        ) : null}
+        {rotateResult !== null ? (
+          <div className="state">
+            Round {rotateResult.closedRoundId} → {rotateResult.newRoundId}
+            {rotateResult.finalizeTxHash !== null ? (
+              <span className="mono">
+                {" "}
+                <a
+                  href={`${EXPLORER_URL}/tx/${rotateResult.finalizeTxHash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  finalize {shortAddress(rotateResult.finalizeTxHash)}
+                </a>
+              </span>
+            ) : null}{" "}
+            <span className="mono">
+              <a
+                href={`${EXPLORER_URL}/tx/${rotateResult.startRoundTxHash}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                startRound {shortAddress(rotateResult.startRoundTxHash)}
+              </a>
+            </span>
           </div>
         ) : null}
         {fundSteps.length === 0 ? (

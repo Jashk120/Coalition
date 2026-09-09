@@ -115,3 +115,79 @@ export type ActivityResponse =
 
 export type FundStep = { readonly walletId: string; readonly decision: "funded" | "skipped" | "failed"; readonly reason: string; readonly roundId?: string; readonly approveTxHash: string | null; readonly commitTxHash: string | null };
 export type FundResponse = { readonly ok: true; readonly pool: string; readonly roundId?: string; readonly steps: readonly FundStep[] } | { readonly ok: false; readonly error: string };
+
+export type RotateResult = { readonly closedRoundId: string; readonly newRoundId: string; readonly finalizeTxHash: string | null; readonly startRoundTxHash: string };
+export type RotateResponse = { readonly ok: true; readonly pool: string; readonly result: RotateResult } | { readonly ok: false; readonly error: string };
+
+/** One discovered pool (JSON-safe; mirrors SDK `DiscoveredPool`). */
+export type NamespaceView = {
+  readonly seedId: string;
+  readonly name: string;
+  /**
+   * Live Permissioned Resolver address, looked up fresh per request.
+   * Null when the name has no resolver (zero address) — explicit empty
+   * state showing live chain truth, never a hardcoded fallback.
+   */
+  readonly resolver: string | null;
+  /**
+   * Live Arc wallet from the subname's multicoin record. Null when the
+   * name has no Arc record — explicit empty state, never the seed wallet.
+   */
+  readonly arcWallet: string | null;
+  /** ERC-8004 agent ids owned by `arcWallet` (decimal strings, bigint-safe). Empty when unresolved. */
+  readonly agentIds: readonly string[];
+  /** Present when a hop failed or resolved empty (why the null/empty). */
+  readonly note?: string;
+};
+
+export type NamespacesResponse =
+  | {
+      readonly ok: true;
+      readonly ensParent: string;
+      readonly namespaces: readonly NamespaceView[];
+    }
+  | { readonly ok: false; readonly error: string };export type DiscoveredPoolView = {
+  readonly pool: string;
+  readonly chainId: number;
+  readonly resourceURI: string;
+  readonly target: string;
+  readonly totalCommitted: string;
+  readonly settled: boolean;
+  readonly roundId: string;
+  readonly source: "explicit" | "subgraph" | "singleton";
+  readonly ensParent: string;
+};
+
+export type PoolsResponse =
+  | {
+      readonly ok: true;
+      readonly chainId: number;
+      readonly ensParent: string;
+      readonly pools: readonly DiscoveredPoolView[];
+      readonly note?: string;
+    }
+  | { readonly ok: false; readonly error: string };
+
+/** Orchestrator container-pool reset relay (POST /api/pools/free → POST /free-pool). */
+export type FreePoolResponse =
+  | { readonly ok: true; readonly freed: unknown }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * ENSv2 Enhanced Access Control demo (POST /api/ens/delegate):
+ * grant → agent write → revoke → revoked write fails. Hashes are 0x tx hashes;
+ * revokedWriteError carries the captured revert as proof the grant was loadbearing.
+ */
+export type EnsDelegateResponse =
+  | {
+      readonly ok: true;
+      readonly name: string;
+      readonly agentWallet: string;
+      readonly resolver: string;
+      readonly coinType: number;
+      readonly grantTxHash: string;
+      readonly writeTxHash: string;
+      readonly revokeTxHash: string;
+      readonly revokedWriteError: string;
+    }
+  | { readonly ok: false; readonly error: string };
