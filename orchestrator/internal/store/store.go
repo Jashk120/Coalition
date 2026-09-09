@@ -327,6 +327,20 @@ func (s *Store) Usage(w domain.WalletAddress) (domain.Usage, error) {
 	return r.usage, nil
 }
 
+// Inflight estimates unbilled spend of in-flight executions at now. Live
+// dashboards add it to Usage so bars climb while work runs instead of
+// jumping only at EndExec billing.
+func (s *Store) Inflight(w domain.WalletAddress) (cuSeconds, mbHours float64, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r, ok := s.wallets[w.String()]
+	if !ok {
+		return 0, 0, fmt.Errorf("wallet %s: %w", w.String(), ErrUnknownWallet)
+	}
+	cuSeconds, mbHours = s.inflightSpendLocked(r, s.now())
+	return cuSeconds, mbHours, nil
+}
+
 // Budgets converts an entitlement into absolute budgets for the window.
 func (s *Store) Budgets(e domain.Entitlement) (cpuSeconds, mbHours float64) {
 	return e.CPU * s.windowHrs * 3600, float64(e.MemMB) * s.windowHrs

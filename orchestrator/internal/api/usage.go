@@ -18,6 +18,8 @@ type agentUsage struct {
 	MemMB               int64   `json:"memMB"`
 	CUSeconds           float64 `json:"cuSeconds"`
 	MBHours             float64 `json:"mbHours"`
+	InFlightCUSeconds   float64 `json:"inFlightCUSeconds"`
+	InFlightMBHours     float64 `json:"inFlightMBHours"`
 	BudgetCUSeconds     float64 `json:"budgetCUSeconds"`
 	BudgetMBHours       float64 `json:"budgetMBHours"`
 	RemainingCUSeconds  int64   `json:"remainingCUSeconds"`
@@ -79,6 +81,10 @@ func (s *Server) handleUsage(w http.ResponseWriter, _ *http.Request) {
 		if err != nil {
 			continue
 		}
+		flightCU, flightMB, err := s.ledger.Inflight(addr)
+		if err != nil {
+			continue
+		}
 		remCU, remMB, err := s.ledger.RemainingBudgets(addr)
 		if err != nil {
 			continue
@@ -90,6 +96,8 @@ func (s *Server) handleUsage(w http.ResponseWriter, _ *http.Request) {
 			MemMB:              ent.MemMB,
 			CUSeconds:          used.CUSeconds,
 			MBHours:            used.MBHours,
+			InFlightCUSeconds:  flightCU,
+			InFlightMBHours:    flightMB,
 			BudgetCUSeconds:    budgetCU,
 			BudgetMBHours:      budgetMB,
 			RemainingCUSeconds: remCU,
