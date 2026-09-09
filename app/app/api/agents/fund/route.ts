@@ -25,10 +25,41 @@ function appKey(): string | undefined {
   return key !== undefined && key !== "" ? key : undefined;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * Provision one agent slice in the orchestrator after its on-chain commit
- * lands, so funding and VPS allocation stay one action. Never throws and
- * never surfaces the agent token: ok flag + error string only.
+ * Allocate with patience: the orchestrator's round tracker can lag a fresh
+ * round behind the chain, wrongly 409ing the first attempts. Three tries
+ * ~8s apart ride out the lag; a settled round with real stake succeeds on
+ * retry once the tracker catches up.
+ */
+async function allocateWithRetry(
+  client: Parameters<typeof getWalletAddress>[0],
+  walletId: string,
+  index: number,
+): Promise<{ readonly ok: boolean; readonly error?: string }> {
+  const funderAddress = await getWalletAddress(client, walletId);
+  const seed = SEED_META[index];
+  const wallet = funderAddress ?? seed?.wallet ?? walletId;
+  const cpu = seed?.cpu ?? 0.1;
+  const memMB = seed?.memMB ?? 400;
+  let last: { readonly ok: boolean; readonly error?: string } = {
+    ok: false,
+    error: "no attempts",
+  };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleep(8_000);
+    last = await allocateSlice(wallet, cpu, memMB);
+    if (last.ok) return last;
+  }
+  return last;
+}
+
+/**
+ * Provision one agent slice in the orchestrator. Never throws and never
+ * surfaces the agent token: ok flag + error string only.
  */
 async function allocateSlice(
   wallet: string,
@@ -109,6 +140,10 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         const expired = round.view.expired;
 
         if (settled || expired) {
+          // Repair path: funding is done but the slice may be missing
+          // (earlier 409s from round-tracker lag). Proven participants can
+          // still allocate post-settle, so try before skipping.
+          const allocation = await allocateWithRetry(client, walletId, index);
           const step: FundStep = {
             walletId,
             decision: "skipped",
@@ -116,12 +151,17 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             roundId,
             approveTxHash: null,
             commitTxHash: null,
+            allocateOk: allocation.ok,
+            ...(allocation.error === undefined
+              ? {}
+              : { allocateError: allocation.error }),
           };
           steps.push(step);
           log("info", "agents.fund.step", {
             walletId,
             decision: step.decision,
             reason: step.reason,
+            allocateOk: allocation.ok,
           });
           continue;
         }
@@ -222,15 +262,10 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         // click funds on-chain AND allocates compute. The slice goes to the
         // actual funder address (Circle wallet), not the display seed
         // wallet — post-settle the orchestrator only honors proven
-        // participants. A failed allocate never flips funded to failed —
+        // participants. Retried: the tracker's round view can lag the commit
+        // by seconds. A failed allocate never flips funded to failed —
         // the money moved, so it is only recorded on the step.
-        const funderAddress = await getWalletAddress(client, walletId);
-        const seed = SEED_META[index];
-        const allocation = await allocateSlice(
-          funderAddress ?? seed?.wallet ?? walletId,
-          seed?.cpu ?? 0.1,
-          seed?.memMB ?? 400,
-        );
+        const allocation = await allocateWithRetry(client, walletId, index);
         const step: FundStep = {
           walletId,
           decision: "funded",
