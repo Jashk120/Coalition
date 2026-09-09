@@ -90,6 +90,28 @@ func (s *Server) handleAllocate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, allocateResponse{Wallet: wallet.String(), ContainerID: id, Token: token})
 }
 
+// syncCurrentRound advances the ledger's tracked v2 round when the chain is
+// ahead (rotate opened N+1 while the settle poller lagged), so FundingClosed
+// is evaluated against the live round instead of the prior settled one.
+// Advance-only: it never marks anything settled, and any read failure keeps
+// the old round (fail-open — a down node must not brick allocation).
+func (s *Server) syncCurrentRound(ctx context.Context) {
+	if s.cfg.PoolV2Address == "" {
+		return
+	}
+	rr, ok := s.verifier.(roundReader)
+	if !ok {
+		return
+	}
+	id, err := rr.CurrentRoundId(ctx, s.cfg.PoolV2Address, "latest")
+	if err != nil || id == nil {
+		return
+	}
+	if cur := s.ledger.CurrentRound(); cur == nil || cur.Cmp(id) < 0 {
+		s.ledger.SetCurrentRound(id)
+	}
+}
+
 // allowPostSettleAllocate decides whether a wallet may allocate after the
 // ledger's funding gate closed. Two proofs, checked in order:
 //
