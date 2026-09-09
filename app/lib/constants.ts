@@ -42,7 +42,9 @@ export const EXPLORER_URL =
 /** Max settled rounds shown in the dashboard history table. */
 export const ROUND_HISTORY_LIMIT = 10;
 
-/** Per-agent share: 20.00 USDC in atomic units (4 x 20.00 = 80.00 target). */
+/** Standard per-agent share (cap): 20.00 USDC in atomic units.
+ * Fund/run routes commit at most this per wallet, splitting the live
+ * remainder across the wallets still to run when less is left. */
 export const SHARE_ATOMIC = 20000000n;
 
 export const ORCHESTRATOR_URL =

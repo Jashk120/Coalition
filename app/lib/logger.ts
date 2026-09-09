@@ -1,15 +1,40 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
 /**
  * Minimal structured logger for app route handlers.
  *
  * JSON lines to stdout — no dependencies, no secrets. Only public,
  * demo-safe fields belong here (counts, addresses, decisions, durations);
  * never tokens, keys, OTPs, or session material.
+ *
+ * Every line is also appended to a debug file so failures survive beyond
+ * the terminal scrollback: `process.env["DEBUG_LOG_FILE"]` when set,
+ * otherwise `logs/debug.log` under the app working directory. File writes
+ * are best-effort and never throw — a full disk must not break a request.
+ * Server-only: route handlers run on Node, never the Edge runtime.
  */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export type LogFields = {
   readonly [key: string]: string | number | boolean | null | undefined;
 };
+
+function debugFilePath(): string {
+  const configured = process.env["DEBUG_LOG_FILE"];
+  if (configured !== undefined && configured !== "") return configured;
+  return "logs/debug.log";
+}
+
+function appendToDebugFile(line: string): void {
+  try {
+    const file = debugFilePath();
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${line}\n`, { encoding: "utf8" });
+  } catch {
+    // Best-effort only: logging must never crash the handler.
+  }
+}
 
 function write(level: LogLevel, event: string, fields?: LogFields): void {
   const line = JSON.stringify({
@@ -23,6 +48,7 @@ function write(level: LogLevel, event: string, fields?: LogFields): void {
   } else {
     process.stdout.write(`${line}\n`);
   }
+  appendToDebugFile(line);
 }
 
 /** Emit one JSON log line for a route-handler moment. */

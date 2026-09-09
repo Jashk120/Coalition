@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   DEMO_SEED_AGENTS,
   fromAtomicUsdc,
-  wouldExceedTarget,
 } from "@jx-nexus/coalition";
 import { SHARE_ATOMIC } from "@/lib/constants";
 import { log } from "@/lib/logger";
@@ -17,9 +16,10 @@ function errorMessage(error: unknown): string {
 
 /**
  * POST /api/agents/run — sequential dry-run of the 4-agent demo loop.
- * Mirrors plans/agent-loop.md §§2–4: seeds run in order, each decision gated
- * by `wouldExceedTarget` against a running total plus the settled/expired
- * flags. No chain writes, no wallet commands — hashes are always null.
+ * Mirrors plans/agent-loop.md §§2–4: seeds run in order, each decision
+ * taking a dynamic slice of the remainder (standard share capped at
+ * what's-left / agents-left). No chain writes, no wallet commands —
+ * hashes are always null.
  */
 export async function POST(): Promise<NextResponse<RunResponse>> {
   const started = Date.now();
@@ -35,20 +35,13 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
   try {
     let running: bigint = BigInt(pool.view.totalCommitted);
     const decisions: AgentDecision[] = [];
-    for (const seed of DEMO_SEED_AGENTS) {
+    for (const [index, seed] of DEMO_SEED_AGENTS.entries()) {
       const round = await readCurrentRound();
       const roundId = round.view.roundId;
       const target: bigint = BigInt(round.view.target);
       const liveTotal: bigint = BigInt(round.view.totalCommitted);
       if (liveTotal > running) running = liveTotal;
       const before = running;
-      const state = {
-        target,
-        totalCommitted: before,
-        settled: round.view.settled,
-        expired: round.view.expired,
-        participantCount: BigInt(round.view.participantCount),
-      };
       if (round.view.settled || round.view.expired) {
         decisions.push({
           agent: seed.id,
@@ -63,11 +56,15 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
         });
         continue;
       }
-      if (wouldExceedTarget(state, SHARE_ATOMIC)) {
+      // Same dynamic fill as POST /api/agents/fund: split the remainder
+      // across the agents still to run, capped at the standard share.
+      const agentsLeft = DEMO_SEED_AGENTS.length - index;
+      const remaining = target > before ? target - before : 0n;
+      if (remaining <= 0n) {
         decisions.push({
           agent: seed.id,
           decision: "skip",
-          reason: `skip: would exceed ${fromAtomicUsdc(target)} target`,
+          reason: `skip: round ${roundId} already at ${fromAtomicUsdc(target)} target`,
           amountAtomic: "0",
           poolFillBefore: before.toString(),
           poolFillAfter: before.toString(),
@@ -77,15 +74,18 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
         });
         continue;
       }
-      const after = before + SHARE_ATOMIC;
+      let amount = SHARE_ATOMIC;
+      const evenSplit = remaining / BigInt(agentsLeft);
+      if (evenSplit < amount) amount = evenSplit > 0n ? evenSplit : remaining;
+      const after = before + amount;
       running = after;
       decisions.push({
         agent: seed.id,
         decision: "join",
         reason:
           `fill ${fromAtomicUsdc(before)}/${fromAtomicUsdc(target)} allows ` +
-          `+${fromAtomicUsdc(SHARE_ATOMIC)}; no dropout tag`,
-        amountAtomic: SHARE_ATOMIC.toString(),
+          `+${fromAtomicUsdc(amount)}; no dropout tag`,
+        amountAtomic: amount.toString(),
         poolFillBefore: before.toString(),
         poolFillAfter: after.toString(),
         roundId,
@@ -130,6 +130,10 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
     });
   } catch (error) {
     const message: string = errorMessage(error);
+    log("error", "agents.run.error", {
+      route: "POST /api/agents/run",
+      error: message,
+    });
     const body: RunResponse = { ok: false, error: message };
     return NextResponse.json(body, { status: 500 });
   }
