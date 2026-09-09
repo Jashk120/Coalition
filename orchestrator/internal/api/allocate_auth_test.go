@@ -123,14 +123,23 @@ func Test_Allocate_oversubscription_and_max_agents(t *testing.T) {
 	}
 }
 
-func Test_Allocate_rejected_once_settled(t *testing.T) {
+func Test_Allocate_post_settle_v1_reservation_reallocates(t *testing.T) {
 	f := newFixture()
 	allocate(t, f, testWalletA, 0.2, 800)
 	f.led.MarkSettled()
+	// A pre-settle reservation keeps its containers after settle: the pool
+	// paid the provider, so re-allocate must still succeed.
 	rec := doAppKey(f, http.MethodPost, "/allocate",
 		`{"wallet":"`+testWalletA+`","cpu":0.2,"mem":800}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("re-allocate after settle: status=%d body=%s, want 201", rec.Code, rec.Body.String())
+	}
+	// A wallet with no reservation and no chain to prove against mints
+	// nothing post-settle.
+	rec = doAppKey(f, http.MethodPost, "/allocate",
+		`{"wallet":"`+testWalletB+`","cpu":0.2,"mem":800}`)
 	if rec.Code != http.StatusConflict {
-		t.Fatalf("allocate after settle: status=%d body=%s, want 409", rec.Code, rec.Body.String())
+		t.Fatalf("unfunded allocate after settle: status=%d body=%s, want 409", rec.Code, rec.Body.String())
 	}
 	var errBody struct {
 		Code string `json:"code"`

@@ -43,7 +43,11 @@ func (s *Server) handleAllocate(w http.ResponseWriter, r *http.Request) {
 	if !s.checkPoolGate(w, r) {
 		return
 	}
-	if s.ledger.FundingClosed() {
+	// Post-settle gate: settled-round participants may still allocate (the
+	// pool already paid the provider, so containers are owed), while wallets
+	// with neither a pre-settle reservation nor on-chain stake stay 409
+	// pool_settled and cannot mint free quota. See allowPostSettleAllocate.
+	if s.ledger.FundingClosed() && !s.allowPostSettleAllocate(r.Context(), wallet) {
 		writeJSONError(w, s.logger, poolSettled("pool settled: allocations are final"))
 		return
 	}
@@ -84,6 +88,86 @@ func (s *Server) handleAllocate(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("memMB", ent.MemMB),
 		slog.String("container", id))
 	writeJSON(w, http.StatusCreated, allocateResponse{Wallet: wallet.String(), ContainerID: id, Token: token})
+}
+
+// allowPostSettleAllocate decides whether a wallet may allocate after the
+// ledger's funding gate closed. Two proofs, checked in order:
+//
+//  1. Local pre-settle reservation: the wallet already holds a ledger entry
+//     (allocate, re-allocate/top-up, or transfer-created recipient). No chain
+//     read is needed, so a down node never blocks owed containers.
+//  2. Chain proof of participation: committed(settledRound, wallet) > 0 at
+//     the v2 pool. This path is fail-CLOSED: an unset pool address, a
+//     verifier without the round surface, or any node error denies with
+//     false (the caller maps it to 409 pool_settled), so an unreachable node
+//     can never mint free post-settle quota. This is deliberately stricter
+//     than poolGate's fail-open: that gate guards liveness of metering,
+//     this one guards minting of quota.
+//
+// Token expiry on the grant path anchors at settledAt + WINDOW_HOURS: the
+// round's settle instant (ledger's settledRounds entry, recorded here when
+// the listener has not seen it yet) is the validity base (see
+// Store.Authenticate), so pre-settle allocations stay usable through the
+// compute window and WINDOW_HOURS=1 demos still expire one hour after
+// settle.
+func (s *Server) allowPostSettleAllocate(ctx context.Context, wallet domain.WalletAddress) bool {
+	if s.ledger.HasWallet(wallet) {
+		return true
+	}
+	return s.verifySettledParticipation(ctx, wallet)
+}
+
+// verifySettledParticipation proves a reservation-less wallet funded the
+// settled v2 round: it resolves the chain's current round, requires the
+// round's own settled view (the ledger flip alone never grants), records
+// the round's settle instant for token expiry, then requires nonzero stake.
+// Every failure denies.
+func (s *Server) verifySettledParticipation(ctx context.Context, wallet domain.WalletAddress) bool {
+	if s.cfg.PoolV2Address == "" {
+		s.logger.Warn("post-settle allocate denied: POOL_V2_ADDRESS empty, no chain to prove against")
+		return false
+	}
+	cr, ok := s.verifier.(settledParticipationReader)
+	if !ok {
+		s.logger.Warn("post-settle allocate denied: verifier has no participation surface")
+		return false
+	}
+	roundId, err := cr.CurrentRoundId(ctx, s.cfg.PoolV2Address, "latest")
+	if err != nil {
+		s.logger.Warn("post-settle allocate denied fail-closed: node unreachable",
+			slog.String("pool", s.cfg.PoolV2Address),
+			slog.Any("err", err))
+		return false
+	}
+	views, err := cr.ReadRoundViews(ctx, s.cfg.PoolV2Address, roundId)
+	if err != nil {
+		s.logger.Warn("post-settle allocate denied fail-closed: round views unreadable",
+			slog.String("pool", s.cfg.PoolV2Address),
+			slog.String("round", roundId.String()),
+			slog.Any("err", err))
+		return false
+	}
+	if !views.Settled {
+		s.logger.Warn("post-settle allocate denied: chain round not settled",
+			slog.String("pool", s.cfg.PoolV2Address),
+			slog.String("round", roundId.String()))
+		return false
+	}
+	stake, err := cr.ReadCommitted(ctx, s.cfg.PoolV2Address, roundId, wallet.String())
+	if err != nil {
+		s.logger.Warn("post-settle allocate denied fail-closed: stake unreadable",
+			slog.String("pool", s.cfg.PoolV2Address),
+			slog.String("round", roundId.String()),
+			slog.Any("err", err))
+		return false
+	}
+	if stake == nil || stake.Sign() <= 0 {
+		return false
+	}
+	// First observation wins, mirroring the listener: it anchors token
+	// expiry at this round's settle instant + window.
+	s.ledger.MarkRoundSettled(roundId)
+	return true
 }
 
 // pinAllocateRound pins the wallet's entitlement to the chain-resolved v2
