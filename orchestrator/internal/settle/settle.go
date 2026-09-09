@@ -73,8 +73,14 @@ const expiredAtSelector = "0xba065e1f"
 // participantCountAtSelector is the first 4 bytes of
 // keccak256("participantCount(uint256)"), the v2 pool's per-round active
 // participant count view.
-// Derived with `cast sig "participantCount(uint256)"`.
 const participantCountAtSelector = "0x0d1df8d0"
+
+// committedSelector is the first 4 bytes of
+// keccak256("committed(uint256,address)"), the auto-generated getter for the
+// v2 pool's per-round per-wallet stake mapping. A nonzero answer is the
+// chain proof that a wallet funded a round.
+// Derived with `cast sig "committed(uint256,address)"`.
+const committedSelector = "0xb29d3b09"
 
 // Listener polls eth_getLogs for POOL_ADDRESS on a time.Ticker. The filter pins
 // topics[0] to the Settled selector, so only the terminal event matches.
@@ -819,6 +825,55 @@ func (c *Client) ReadRoundViews(ctx context.Context, pool string, roundId *big.I
 
 // errInvalidRound is returned when a round id is nil or negative.
 var errInvalidRound = errors.New("settle: invalid round id")
+
+// errInvalidWallet is returned when a wallet address is not 0x + 40 hex.
+var errInvalidWallet = errors.New("settle: invalid wallet address")
+
+// ReadCommitted reads one wallet's stake in a v2 round via the public
+// committed(roundId, wallet) getter: nonzero means the wallet funded the
+// round. It is the post-settle allocate gate's chain proof of participation
+// for wallets with no local pre-settle reservation.
+func (c *Client) ReadCommitted(ctx context.Context, pool string, roundId *big.Int, wallet string) (*big.Int, error) {
+	data, err := encodeCommittedArg(committedSelector, roundId, wallet)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.ethCallRaw(ctx, pool, data, "latest")
+	if err != nil {
+		return nil, fmt.Errorf("committed view: %w", err)
+	}
+	v, err := parseHexUint(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode committed view %q: %w", raw, err)
+	}
+	return v, nil
+}
+
+// encodeCommittedArg builds committed(uint256,address) calldata: selector
+// followed by the round id and the wallet address, each as one 32-byte
+// left-padded word. The wallet must be 0x-prefixed 20-byte hex; anything
+// else is rejected before any RPC call.
+func encodeCommittedArg(selector string, id *big.Int, wallet string) (string, error) {
+	if id == nil || id.Sign() < 0 {
+		return "", fmt.Errorf("round %v: %w", id, errInvalidRound)
+	}
+	addr := strings.ToLower(strings.TrimSpace(wallet))
+	if len(addr) != 42 || !strings.HasPrefix(addr, "0x") {
+		return "", fmt.Errorf("wallet %q: %w", wallet, errInvalidWallet)
+	}
+	for _, ch := range addr[2:] {
+		if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f') {
+			return "", fmt.Errorf("wallet %q: %w", wallet, errInvalidWallet)
+		}
+	}
+	roundHex := id.Text(16)
+	if len(roundHex) > 64 {
+		return "", fmt.Errorf("round %v overflows uint256: %w", id, errInvalidRound)
+	}
+	return selector +
+		strings.Repeat("0", 64-len(roundHex)) + roundHex +
+		strings.Repeat("0", 24) + addr[2:], nil
+}
 
 // encodeUintArg builds selector + ABI-encoded uint256 calldata.
 func encodeUintArg(selector string, id *big.Int) (string, error) {

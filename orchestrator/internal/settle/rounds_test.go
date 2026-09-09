@@ -410,3 +410,65 @@ func Test_ReadRoundViews_rejects_bad_round(t *testing.T) {
 		t.Fatal("negative round must error")
 	}
 }
+
+func Test_ReadCommitted_round_trip_and_validation(t *testing.T) {
+	const wallet = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+	var gotData string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := decodeBody(r, &req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var params []json.RawMessage
+		if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var call struct {
+			Data string `json:"data"`
+		}
+		if err := json.Unmarshal(params[0], &call); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		gotData = strings.ToLower(call.Data)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x00000000000000000000000000000000000000000000000000000000002625a0"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL)
+
+	stake, err := c.ReadCommitted(context.Background(), testV2Pool, big.NewInt(7), wallet)
+	if err != nil {
+		t.Fatalf("ReadCommitted: %v", err)
+	}
+	if stake.Cmp(big.NewInt(2500000)) != 0 {
+		t.Fatalf("stake = %s, want 2500000", stake)
+	}
+	want := committedSelector + fmt.Sprintf("%064x", 7) + "000000000000000000000000" + strings.TrimPrefix(wallet, "0x")
+	if gotData != want {
+		t.Fatalf("calldata = %s, want %s", gotData, want)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		round  *big.Int
+		wallet string
+	}{
+		{"nil round", nil, wallet},
+		{"negative round", big.NewInt(-1), wallet},
+		{"short wallet", big.NewInt(7), "0x1234"},
+		{"non-hex wallet", big.NewInt(7), "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"},
+		{"missing prefix", big.NewInt(7), "70997970c51812dc3a010c7d01b50e0d17dc79c8"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := c.ReadCommitted(context.Background(), testV2Pool, tc.round, tc.wallet); err == nil {
+				t.Fatal("must error before any RPC call")
+			}
+		})
+	}
+}

@@ -756,6 +756,50 @@ func (s *Store) Wallets() []string {
 	return out
 }
 
+// ContainerBinding is one wallet's container attachment: the ledger side of
+// a free-pool kill. ContainerID is "" when the wallet holds entitlement but
+// has no container bound (eviction, restart, transfer-created).
+type ContainerBinding struct {
+	Wallet      string
+	ContainerID string
+}
+
+// ListContainers snapshots every wallet's container attachment, sorted by
+// wallet for determinism. Pure scan under RLock: it kills nothing, revokes
+// nothing — the free-pool handler drives kills from this snapshot and then
+// calls RemoveWallet per wallet.
+func (s *Store) ListContainers() []ContainerBinding {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]ContainerBinding, 0, len(s.wallets))
+	for w, r := range s.wallets {
+		out = append(out, ContainerBinding{Wallet: w, ContainerID: r.containerID})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Wallet < out[j].Wallet })
+	return out
+}
+
+// RemoveWallet deletes a wallet's ledger record entirely: entitlement,
+// container binding, bearer token, and usage metering. Deletion implies
+// revocation — with no record left, Authenticate reports ErrUnknownWallet
+// (401), so the old token can never execute again. Returns true when a
+// record existed.
+//
+// Full clear (not usage-preserving) is deliberate: the free-pool operator
+// reset exists so judges can re-test the same pool, and pool admission is
+// SUM(entitlements) <= totals — keeping entitlement rows would leave the
+// pool exhausted and defeat the reset. Usage without entitlement is
+// meaningless (Exceeded on an unknown wallet errors), so it goes too.
+func (s *Store) RemoveWallet(w domain.WalletAddress) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.wallets[w.String()]; !ok {
+		return false
+	}
+	delete(s.wallets, w.String())
+	return true
+}
+
 // DistinctWallets counts wallets holding a positive entitlement slice.
 func (s *Store) DistinctWallets() int {
 	s.mu.RLock()
