@@ -12,6 +12,17 @@ export type PoolStateView = {
   readonly participantCount: string;
 };
 
+/** One round-scoped funding snapshot. Amounts are atomic-unit decimal strings. */
+export type RoundView = {
+  readonly roundId: string;
+  readonly target: string;
+  readonly totalCommitted: string;
+  readonly settled: boolean;
+  readonly expired: boolean;
+  readonly deadline: string;
+  readonly participantCount: string;
+};
+
 export type ResolutionView =
   | {
       readonly seedId: string;
@@ -35,6 +46,10 @@ export type AgentsResponse =
       readonly poolState: PoolStateView;
       readonly poolStateSource: "subgraph" | "chain" | "fallback";
       readonly buyer: { readonly wallet: string; readonly ensName: string };
+      readonly round?: RoundView;
+      readonly roundId?: string;
+      readonly deadline?: string;
+      readonly history?: readonly RoundView[];
       readonly note?: string;
     }
   | { readonly ok: false; readonly error: string };
@@ -47,6 +62,7 @@ export type AgentDecision = {
   readonly amountAtomic: string;
   readonly poolFillBefore: string;
   readonly poolFillAfter: string;
+  readonly roundId?: string;
   readonly approveHash: null;
   readonly commitHash: null;
 };
@@ -58,6 +74,7 @@ export type RunResponse =
       readonly agents: number;
       readonly mode: "sequential";
       readonly dryRun: true;
+      readonly roundId?: string;
       readonly decisions: readonly AgentDecision[];
     }
   | { readonly ok: false; readonly error: string };
@@ -68,12 +85,22 @@ export type ActivityEvent =
       readonly kind: "committed";
       readonly agent: string;
       readonly amountAtomic: string;
+      readonly roundId?: string;
       readonly blockNumber: string;
       readonly txHash: string;
     }
   | {
       readonly kind: "settled";
       readonly totalAtomic: string;
+      readonly roundId?: string;
+      readonly blockNumber: string;
+      readonly txHash: string;
+    }
+  | {
+      readonly kind: "round-started";
+      readonly roundId: string;
+      readonly targetAtomic: string;
+      readonly deadline: string;
       readonly blockNumber: string;
       readonly txHash: string;
     };
@@ -86,5 +113,5 @@ export type ActivityResponse =
     }
   | { readonly ok: false; readonly error: string };
 
-export type FundStep = { readonly walletId: string; readonly decision: "funded" | "skipped" | "failed"; readonly reason: string; readonly approveTxHash: string | null; readonly commitTxHash: string | null };
-export type FundResponse = { readonly ok: true; readonly pool: string; readonly steps: readonly FundStep[] } | { readonly ok: false; readonly error: string };
+export type FundStep = { readonly walletId: string; readonly decision: "funded" | "skipped" | "failed"; readonly reason: string; readonly roundId?: string; readonly approveTxHash: string | null; readonly commitTxHash: string | null };
+export type FundResponse = { readonly ok: true; readonly pool: string; readonly roundId?: string; readonly steps: readonly FundStep[] } | { readonly ok: false; readonly error: string };

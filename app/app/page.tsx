@@ -10,6 +10,7 @@ import type {
   FundResponse,
   FundStep,
   ResolutionView,
+  RoundView,
   RunResponse,
 } from "@/lib/types";
 
@@ -92,6 +93,35 @@ function resolutionFor(
   resolutions: readonly ResolutionView[],
 ): ResolutionView | undefined {
   return resolutions.find((entry) => entry.seedId === seedId);
+}
+
+/** Human countdown to a unix-seconds deadline ("0" = legacy pool, no deadline). */
+function formatCountdown(deadline: string): string {
+  try {
+    const at = BigInt(deadline);
+    if (at === 0n) return "no deadline (legacy pool)";
+    const remaining = Number(at * 1000n - BigInt(Date.now()));
+    if (remaining <= 0) return "deadline passed";
+    const totalSeconds = Math.floor(remaining / 1000);
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const parts: string[] = [];
+    if (days > 0) parts.push(`${String(days)}d`);
+    if (hours > 0 || days > 0) parts.push(`${String(hours)}h`);
+    if (minutes > 0 || hours > 0 || days > 0) parts.push(`${String(minutes)}m`);
+    parts.push(`${String(seconds)}s`);
+    return `deadline in ${parts.join(" ")}`;
+  } catch {
+    return deadline;
+  }
+}
+
+function roundResult(round: RoundView): "settled" | "expired" | "open" {
+  if (round.settled) return "settled";
+  if (round.expired) return "expired";
+  return "open";
 }
 
 async function parseJson(response: Response): Promise<unknown> {
@@ -307,6 +337,111 @@ export default function DashboardPage() {
               <div className="state">Degraded read: {agents.note}</div>
             ) : null}
           </>
+        )}
+      </section>
+
+      <section className="card" aria-label="Live round">
+        <h2>Live round</h2>
+        {agentsError !== null ? (
+          <div className="state state-error" role="alert">
+            Round state unavailable: {agentsError}
+          </div>
+        ) : agents === null ? (
+          <div className="state">Loading round state…</div>
+        ) : agents.round === undefined ? (
+          <div className="state">No round data — refresh pool state.</div>
+        ) : (
+          <>
+            <div>
+              <span className="pill pill-ok">Round {agents.round.roundId}</span>{" "}
+              <span className="pill">
+                {roundResult(agents.round)}
+              </span>
+            </div>
+            <div className="fill-track" aria-hidden="true">
+              <div
+                className="fill-bar"
+                style={{
+                  width: `${String(fillPercent(agents.round.totalCommitted, agents.round.target))}%`,
+                }}
+              />
+            </div>
+            <div className="fill-label">
+              {formatUsdc(agents.round.totalCommitted)} /{" "}
+              {formatUsdc(agents.round.target)} USDC ·{" "}
+              {agents.round.participantCount} participant(s) ·{" "}
+              {formatCountdown(agents.round.deadline)}
+            </div>
+            <div className="mono">
+              deadline{" "}
+              {agents.round.deadline === "0"
+                ? "—"
+                : new Date(
+                    Number(BigInt(agents.round.deadline) * 1000n),
+                  ).toISOString()}
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className="card" aria-label="Round history">
+        <h2>Round history</h2>
+        {agentsError !== null ? (
+          <div className="state state-error" role="alert">
+            History unavailable: {agentsError}
+          </div>
+        ) : agents === null ? (
+          <div className="state">Loading round history…</div>
+        ) : agents.history === undefined || agents.history.length === 0 ? (
+          <div className="state">
+            No settled rounds yet — history appears after the first round
+            closes.
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Round</th>
+                  <th>Result</th>
+                  <th>Total</th>
+                  <th>Participants</th>
+                  <th>Pool</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.history.map((round) => (
+                  <tr key={round.roundId}>
+                    <td className="mono">{round.roundId}</td>
+                    <td>
+                      <span
+                        className={
+                          roundResult(round) === "settled"
+                            ? "pill pill-ok"
+                            : roundResult(round) === "expired"
+                              ? "pill pill-warn"
+                              : "pill"
+                        }
+                      >
+                        {roundResult(round)}
+                      </span>
+                    </td>
+                    <td>{formatUsdc(round.totalCommitted)} USDC</td>
+                    <td className="mono">{round.participantCount}</td>
+                    <td className="mono">
+                      <a
+                        href={`${EXPLORER_URL}/address/${agents.pool}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {shortAddress(agents.pool)}
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -530,7 +665,12 @@ export default function DashboardPage() {
               <tbody>
                 {activity.events.map((event) => (
                   <tr key={`${event.blockNumber}-${event.txHash}-${event.kind}`}>
-                    <td>{event.kind}</td>
+                    <td>
+                      {event.kind}
+                      {event.roundId !== undefined
+                        ? ` · round ${event.roundId}`
+                        : null}
+                    </td>
                     <td className="mono">
                       {event.kind === "committed"
                         ? shortAddress(event.agent)
@@ -539,7 +679,9 @@ export default function DashboardPage() {
                     <td>
                       {event.kind === "committed"
                         ? `${formatUsdc(event.amountAtomic)} USDC`
-                        : `${formatUsdc(event.totalAtomic)} USDC`}
+                        : event.kind === "settled"
+                          ? `${formatUsdc(event.totalAtomic)} USDC`
+                          : `${formatUsdc(event.targetAtomic)} USDC target`}
                     </td>
                     <td className="mono">{event.blockNumber}</td>
                     <td className="mono">

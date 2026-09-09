@@ -8,7 +8,7 @@ import {
   readCircleEnv,
 } from "@/lib/circle-fund";
 import { log } from "@/lib/logger";
-import { readPoolState } from "@/lib/pool-state";
+import { readCurrentRound } from "@/lib/pool-state";
 import type { FundResponse, FundStep } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -41,19 +41,22 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
 
   try {
     const steps: FundStep[] = [];
+    let fundedRoundId: string | undefined;
     for (const walletId of env.walletIds) {
       try {
-        const pool = await readPoolState();
-        const target: bigint = BigInt(pool.view.target);
-        const totalCommitted: bigint = BigInt(pool.view.totalCommitted);
-        const settled = pool.view.settled;
-        const expired = pool.view.expired;
+        const round = await readCurrentRound();
+        const roundId = round.view.roundId;
+        const target: bigint = BigInt(round.view.target);
+        const totalCommitted: bigint = BigInt(round.view.totalCommitted);
+        const settled = round.view.settled;
+        const expired = round.view.expired;
 
         if (settled || expired) {
           const step: FundStep = {
             walletId,
             decision: "skipped",
-            reason: "skip: pool settled/expired",
+            reason: `skip: round ${roundId} settled/expired`,
+            roundId,
             approveTxHash: null,
             commitTxHash: null,
           };
@@ -73,7 +76,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
               totalCommitted,
               settled,
               expired,
-              participantCount: BigInt(pool.view.participantCount),
+              participantCount: BigInt(round.view.participantCount),
             },
             SHARE_ATOMIC,
           )
@@ -82,6 +85,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             walletId,
             decision: "skipped",
             reason: `skip: would exceed ${fromAtomicUsdc(target)} target`,
+            roundId,
             approveTxHash: null,
             commitTxHash: null,
           };
@@ -105,6 +109,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             walletId,
             decision: "failed",
             reason: `approve failed: ${approve.error}`,
+            roundId,
             approveTxHash: null,
             commitTxHash: null,
           };
@@ -117,17 +122,26 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           continue;
         }
 
-        const commit = await executeContractAndWait(client, {
-          walletId,
-          contractAddress: POOL_ADDRESS,
-          abiFunctionSignature: "commit(uint256)",
-          abiParameters: [shareAmount],
-        });
+        const commit =
+          roundId === "0"
+            ? await executeContractAndWait(client, {
+                walletId,
+                contractAddress: POOL_ADDRESS,
+                abiFunctionSignature: "commit(uint256)",
+                abiParameters: [shareAmount],
+              })
+            : await executeContractAndWait(client, {
+                walletId,
+                contractAddress: POOL_ADDRESS,
+                abiFunctionSignature: "commit(uint256,uint256)",
+                abiParameters: [roundId, shareAmount],
+              });
         if (!commit.ok) {
           const step: FundStep = {
             walletId,
             decision: "failed",
             reason: `commit failed: ${commit.error}`,
+            roundId,
             approveTxHash: approve.txHash,
             commitTxHash: null,
           };
@@ -144,11 +158,13 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         const step: FundStep = {
           walletId,
           decision: "funded",
-          reason: `funded +${fromAtomicUsdc(SHARE_ATOMIC)} USDC`,
+          reason: `funded +${fromAtomicUsdc(SHARE_ATOMIC)} USDC to round ${roundId}`,
+          roundId,
           approveTxHash: approve.txHash,
           commitTxHash: commit.txHash,
         };
         steps.push(step);
+        fundedRoundId = roundId;
         log("info", "agents.fund.step", {
           walletId,
           decision: step.decision,
@@ -180,9 +196,15 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
       skipped: steps.filter((step) => step.decision === "skipped").length,
       failed: steps.filter((step) => step.decision === "failed").length,
       durationMs: Date.now() - started,
+      ...(fundedRoundId === undefined ? {} : { roundId: fundedRoundId }),
     });
 
-    return NextResponse.json({ ok: true, pool: POOL_ADDRESS, steps });
+    return NextResponse.json({
+      ok: true,
+      pool: POOL_ADDRESS,
+      ...(fundedRoundId === undefined ? {} : { roundId: fundedRoundId }),
+      steps,
+    });
   } catch (error) {
     const body: FundResponse = { ok: false, error: errorMessage(error) };
     return NextResponse.json(body, { status: 500 });

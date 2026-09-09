@@ -39,6 +39,9 @@ export const POOL_DEPLOY_BLOCK: bigint = (() => {
 export const EXPLORER_URL =
   process.env["NEXT_PUBLIC_EXPLORER_URL"] ?? "https://testnet.arcscan.app";
 
+/** Max settled rounds shown in the dashboard history table. */
+export const ROUND_HISTORY_LIMIT = 10;
+
 /** Per-agent share: 2.50 USDC in atomic units (4 x 2.50 = 10.00 target). */
 export const SHARE_ATOMIC = 2500000n;
 

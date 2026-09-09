@@ -5,9 +5,9 @@ import {
   resolveSeedAgents,
 } from "@jx-nexus/coalition";
 import { arcPublicClient, sepoliaPublicClient } from "@/lib/chain";
-import { CHAIN_ID, IDENTITY_REGISTRY_FROM_BLOCK, OUTSIDE_BUYER, POOL_ADDRESS, SEED_META } from "@/lib/constants";
+import { CHAIN_ID, IDENTITY_REGISTRY_FROM_BLOCK, OUTSIDE_BUYER, POOL_ADDRESS, ROUND_HISTORY_LIMIT, SEED_META } from "@/lib/constants";
 import { log, logTimed } from "@/lib/logger";
-import { readPoolState } from "@/lib/pool-state";
+import { readCurrentRound, readPoolState, readRoundHistory } from "@/lib/pool-state";
 import type { AgentsResponse, ResolutionView } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -95,13 +95,19 @@ export async function GET(): Promise<NextResponse<AgentsResponse>> {
   }
 
   const pool = await readPoolState();
+  const round = await readCurrentRound();
+  const history = await readRoundHistory(ROUND_HISTORY_LIMIT);
   const resolved = resolutions.filter((r) => r.status === "resolved").length;
   log("info", "agents.read", {
     route: "GET /api/agents",
     resolved,
     skipped: resolutions.length - resolved,
     poolSource: pool.source,
+    roundId: round.view.roundId,
+    roundSource: round.source,
+    history: history.length,
     ...(pool.note === undefined ? {} : { note: pool.note }),
+    ...(round.note === undefined ? {} : { roundNote: round.note }),
   });
 
   return NextResponse.json({
@@ -112,6 +118,10 @@ export async function GET(): Promise<NextResponse<AgentsResponse>> {
     poolState: pool.view,
     poolStateSource: pool.source,
     buyer: { wallet: OUTSIDE_BUYER.wallet, ensName: OUTSIDE_BUYER.ensName },
+    round: round.view,
+    roundId: round.view.roundId,
+    deadline: round.view.deadline,
+    history,
     ...(pool.note === undefined ? {} : { note: pool.note }),
   });
 }

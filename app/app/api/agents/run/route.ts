@@ -6,7 +6,7 @@ import {
 } from "@jx-nexus/coalition";
 import { SHARE_ATOMIC } from "@/lib/constants";
 import { log } from "@/lib/logger";
-import { readPoolState } from "@/lib/pool-state";
+import { readCurrentRound, readPoolState } from "@/lib/pool-state";
 import type { AgentDecision, RunResponse } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -33,61 +33,66 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
   });
 
   try {
-    const target: bigint = BigInt(pool.view.target);
     let running: bigint = BigInt(pool.view.totalCommitted);
-    const settled = pool.view.settled;
-    const expired = pool.view.expired;
-
-    const decisions: readonly AgentDecision[] = DEMO_SEED_AGENTS.map(
-      (seed): AgentDecision => {
-        const before = running;
-        const state = {
-          target,
-          totalCommitted: before,
-          settled,
-          expired,
-          participantCount: BigInt(pool.view.participantCount),
-        };
-        if (settled || expired) {
-          return {
-            agent: seed.id,
-            decision: "skip",
-            reason: "skip: pool settled/expired",
-            amountAtomic: "0",
-            poolFillBefore: before.toString(),
-            poolFillAfter: before.toString(),
-            approveHash: null,
-            commitHash: null,
-          };
-        }
-        if (wouldExceedTarget(state, SHARE_ATOMIC)) {
-          return {
-            agent: seed.id,
-            decision: "skip",
-            reason: `skip: would exceed ${fromAtomicUsdc(target)} target`,
-            amountAtomic: "0",
-            poolFillBefore: before.toString(),
-            poolFillAfter: before.toString(),
-            approveHash: null,
-            commitHash: null,
-          };
-        }
-        const after = before + SHARE_ATOMIC;
-        running = after;
-        return {
+    const decisions: AgentDecision[] = [];
+    for (const seed of DEMO_SEED_AGENTS) {
+      const round = await readCurrentRound();
+      const roundId = round.view.roundId;
+      const target: bigint = BigInt(round.view.target);
+      const liveTotal: bigint = BigInt(round.view.totalCommitted);
+      if (liveTotal > running) running = liveTotal;
+      const before = running;
+      const state = {
+        target,
+        totalCommitted: before,
+        settled: round.view.settled,
+        expired: round.view.expired,
+        participantCount: BigInt(round.view.participantCount),
+      };
+      if (round.view.settled || round.view.expired) {
+        decisions.push({
           agent: seed.id,
-          decision: "join",
-          reason:
-            `fill ${fromAtomicUsdc(before)}/${fromAtomicUsdc(target)} allows ` +
-            `+${fromAtomicUsdc(SHARE_ATOMIC)}; no dropout tag`,
-          amountAtomic: SHARE_ATOMIC.toString(),
+          decision: "skip",
+          reason: `skip: round ${roundId} settled/expired`,
+          amountAtomic: "0",
           poolFillBefore: before.toString(),
-          poolFillAfter: after.toString(),
+          poolFillAfter: before.toString(),
+          roundId,
           approveHash: null,
           commitHash: null,
-        };
-      },
-    );
+        });
+        continue;
+      }
+      if (wouldExceedTarget(state, SHARE_ATOMIC)) {
+        decisions.push({
+          agent: seed.id,
+          decision: "skip",
+          reason: `skip: would exceed ${fromAtomicUsdc(target)} target`,
+          amountAtomic: "0",
+          poolFillBefore: before.toString(),
+          poolFillAfter: before.toString(),
+          roundId,
+          approveHash: null,
+          commitHash: null,
+        });
+        continue;
+      }
+      const after = before + SHARE_ATOMIC;
+      running = after;
+      decisions.push({
+        agent: seed.id,
+        decision: "join",
+        reason:
+          `fill ${fromAtomicUsdc(before)}/${fromAtomicUsdc(target)} allows ` +
+          `+${fromAtomicUsdc(SHARE_ATOMIC)}; no dropout tag`,
+        amountAtomic: SHARE_ATOMIC.toString(),
+        poolFillBefore: before.toString(),
+        poolFillAfter: after.toString(),
+        roundId,
+        approveHash: null,
+        commitHash: null,
+      });
+    }
 
     for (const d of decisions) {
       log("debug", "agents.run.decision", {
@@ -104,12 +109,14 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
     const stamp = now.toISOString().slice(0, 19).replaceAll("-", "").replaceAll(":", "").replace("T", "-");
 
     const joins = decisions.filter((d) => d.decision === "join").length;
+    const first = decisions[0];
     log("info", "agents.run.complete", {
       route: "POST /api/agents/run",
       runId: `demo-${stamp}-001`,
       joins,
       skips: decisions.length - joins,
       durationMs: Date.now() - started,
+      ...(first?.roundId === undefined ? {} : { roundId: first.roundId }),
     });
 
     return NextResponse.json({
@@ -118,6 +125,7 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
       agents: DEMO_SEED_AGENTS.length,
       mode: "sequential",
       dryRun: true,
+      ...(first?.roundId === undefined ? {} : { roundId: first.roundId }),
       decisions,
     });
   } catch (error) {
