@@ -18,6 +18,18 @@ type roundReader interface {
 	ReadRoundViews(ctx context.Context, pool string, roundId *big.Int) (*settle.RoundViews, error)
 }
 
+// settledParticipationReader is the optional chain-proof surface the
+// post-settle allocate gate needs: the round-scoped views plus the
+// per-wallet committed(roundId, wallet) stake read. Asserted as one unit at
+// runtime so partial fakes fail closed (deny) instead of half-proving.
+// The production *settle.Client implements it; the receiptVerifier
+// interface stays untouched.
+type settledParticipationReader interface {
+	CurrentRoundId(ctx context.Context, pool, blockTag string) (*big.Int, error)
+	ReadRoundViews(ctx context.Context, pool string, roundId *big.Int) (*settle.RoundViews, error)
+	ReadCommitted(ctx context.Context, pool string, roundId *big.Int, wallet string) (*big.Int, error)
+}
+
 // poolGate enforces pool awareness on the funding endpoints: when POOL_ADDRESS
 // is set and the chain reports expired && !settled, the pool closed unfilled
 // and /allocate, /quote, /transfer-quota are rejected with 409 pool_closed.

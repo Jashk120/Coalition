@@ -62,6 +62,8 @@ func NewServer(cfg config.Config, ledger *store.Store, be backend.ContainerBacke
 		appAuthOpen: cfg.AllowNoAppAuth && cfg.AppAPIKey == "",
 	}
 	s.mux.HandleFunc("POST /allocate", s.requireAppKey(s.handleAllocate))
+	s.mux.HandleFunc("POST /free-pool", s.requireAppKey(s.handleFreePool))
+	s.mux.HandleFunc("DELETE /free-wallet", s.requireAppKey(s.handleFreeWallet))
 	s.mux.HandleFunc("POST /run", s.handleRun)
 	s.mux.HandleFunc("GET /terms.json", s.handleTerms)
 	s.mux.HandleFunc("GET /quote", s.handleQuote)
