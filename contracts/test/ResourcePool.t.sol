@@ -76,16 +76,20 @@ contract ResourcePoolTest is Test {
     uint64 deadline;
 
     event Committed(address indexed agent, uint256 amount);
+    event Committed(address indexed agent, uint256 indexed roundId, uint256 amount);
     event Settled(uint256 total);
+    event Settled(uint256 indexed roundId, uint256 total);
     event ExpiredFinalized(uint256 balance, uint256 claimants);
     event Refunded(address indexed agent, uint256 amount);
     event DroppedOut(address indexed agent, uint256 forfeited);
+    event RoundStarted(uint256 indexed roundId, uint256 target, uint64 deadline, uint256 maxParticipants);
 
     function setUp() public {
         usdc = new MockUSDC();
         rep = new MockReputation();
         deadline = uint64(block.timestamp + 7 days);
-        pool = new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "ipfs://test-resource", 10);
+        // Round 1 is seeded at deploy; cap == round-1 max here.
+        pool = new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "ipfs://test-resource", 10, 10);
 
         usdc.mint(alice, 100_000_000);
         usdc.mint(bob, 100_000_000);
@@ -99,27 +103,34 @@ contract ResourcePoolTest is Test {
         vm.stopPrank();
     }
 
-    // --- Path 1: fill + settle -------------------------------------------------
+    function _commitR(address who, uint256 roundId, uint256 amount) internal {
+        vm.startPrank(who);
+        usdc.approve(address(pool), amount);
+        pool.commit(roundId, amount);
+        vm.stopPrank();
+    }
+
+    // --- Path 1: fill + inline auto-settle -------------------------------------
 
     function test_fillAndSettle() public {
-        _commit(alice, 4_000_000);
-        _commit(bob, 3_000_000);
+        vm.startPrank(alice);
+        usdc.approve(address(pool), 4_000_000);
+        pool.commit(4_000_000);
+        pool.bindAgentId(1);
+        vm.stopPrank();
+        vm.startPrank(bob);
+        usdc.approve(address(pool), 3_000_000);
+        pool.commit(3_000_000);
+        pool.bindAgentId(2);
+        vm.stopPrank();
+
+        assertFalse(pool.settled(), "not filled yet");
+
+        // The filling commit pays the provider inline: no separate settle call.
         _commit(carol, 3_000_000);
 
         assertEq(pool.totalCommitted(), TARGET);
         assertEq(uint256(pool.participantCount()), 3);
-
-        vm.startPrank(alice);
-        pool.bindAgentId(1);
-        vm.stopPrank();
-        vm.startPrank(bob);
-        pool.bindAgentId(2);
-        vm.stopPrank();
-
-        vm.expectEmit(false, false, false, true);
-        emit Settled(TARGET);
-        pool.settle();
-
         assertTrue(pool.settled());
         assertEq(usdc.balanceOf(provider), TARGET);
         assertEq(usdc.balanceOf(address(pool)), 0, "no stranded funds");
@@ -138,22 +149,21 @@ contract ResourcePoolTest is Test {
 
     function test_recordCompletionsPaginatesAndSkips() public {
         _commit(alice, 4_000_000);
-        _commit(bob, 3_000_000);
-        _commit(carol, 3_000_000);
-
-        // Only alice binds; bob stays unbound (skipped), carol drops (skipped).
         vm.prank(alice);
         pool.bindAgentId(1);
+        // Carol commits then drops BEFORE the pool fills, so the dropout write
+        // happens pre-settle and her forfeit still counts toward target.
+        _commit(carol, 3_000_000);
         vm.prank(carol);
         pool.dropOut(3);
+        // Bob's top-up fills the pool and auto-settles inline.
+        _commit(bob, 3_000_000);
 
-        // Forfeiture counts toward target, so the pool still fills and settles.
-        pool.settle();
         assertEq(usdc.balanceOf(provider), TARGET);
         assertEq(rep.callCount(), 1, "only carol's dropout write so far");
         assertEq(rep.values(0), -1);
 
-        // One record per call: cursor advances, each participant recorded once.
+        // Join order is alice, carol, bob. One record per call.
         pool.recordCompletions(1);
         assertEq(pool.feedbackCursor(), 1);
         assertEq(rep.callCount(), 2);
@@ -163,11 +173,11 @@ contract ResourcePoolTest is Test {
 
         pool.recordCompletions(1);
         assertEq(pool.feedbackCursor(), 2);
-        assertEq(rep.callCount(), 2, "unbound bob skipped");
+        assertEq(rep.callCount(), 2, "dropped carol skipped");
 
         pool.recordCompletions(10); // clamped at the end, no overrun
         assertEq(pool.feedbackCursor(), 3);
-        assertEq(rep.callCount(), 2, "dropped carol skipped");
+        assertEq(rep.callCount(), 2, "unbound bob skipped");
 
         pool.recordCompletions(10); // past-the-end call is a no-op
         assertEq(rep.callCount(), 2);
@@ -180,12 +190,14 @@ contract ResourcePoolTest is Test {
     }
 
     function test_settleAfterDeadlineStillWorksWhenFilled() public {
-        _commit(alice, TARGET);
+        _commit(alice, TARGET); // inline auto-settle fires immediately
+        assertTrue(pool.settled());
         vm.warp(deadline + 1);
         assertFalse(pool.expired(), "filled pool never reads expired");
-        pool.settle();
-        assertTrue(pool.settled());
         assertEq(usdc.balanceOf(provider), TARGET);
+        // Permissionless fallback reverts cleanly now that inline already fired.
+        vm.expectRevert(ResourcePool.AlreadySettled.selector);
+        pool.settle(1);
     }
 
     // --- Path 2: expire + refund ------------------------------------------------
@@ -266,10 +278,11 @@ contract ResourcePoolTest is Test {
         assertEq(rep.values(0), -1);
         assertEq(rep.tag1s(0), "dropout");
 
-        // Forfeiture stays locked and counts toward target: carol tops up to fill.
+        // Forfeiture stays locked and counts toward target: carol tops up to
+        // fill, and the filling commit auto-settles inline.
         assertEq(pool.totalCommitted(), 8_000_000);
         _commit(carol, 2_000_000);
-        pool.settle();
+        assertTrue(pool.settled());
         assertEq(usdc.balanceOf(provider), TARGET);
         assertEq(usdc.balanceOf(address(pool)), 0, "no stranded funds");
     }
@@ -354,16 +367,19 @@ contract ResourcePoolTest is Test {
     // --- Path 4: unauthorized writes rejected ------------------------------------
 
     function test_reverts() public {
-        // Commit over target is capped.
-        _commit(alice, TARGET);
+        // Commit over target is capped (checked before the pool fills).
+        _commit(alice, TARGET - 1);
         vm.startPrank(bob);
-        usdc.approve(address(pool), 1);
+        usdc.approve(address(pool), 2);
         vm.expectRevert(abi.encodeWithSelector(ResourcePool.OverTarget.selector, TARGET + 1, TARGET));
-        pool.commit(1);
+        pool.commit(2);
         vm.stopPrank();
 
-        // Settle works once filled; second settle reverts.
-        pool.settle();
+        // Alice's top-up fills the pool and auto-settles inline.
+        _commit(alice, 1);
+        assertTrue(pool.settled());
+
+        // Second settle reverts (legacy shim keeps the v1 error).
         vm.expectRevert(ResourcePool.PoolSettled.selector);
         pool.settle();
 
@@ -446,8 +462,8 @@ contract ResourcePoolTest is Test {
     }
 
     function test_bindAfterSettleReverts() public {
-        _commit(alice, TARGET);
-        pool.settle();
+        _commit(alice, TARGET); // inline auto-settle
+        assertTrue(pool.settled());
         vm.prank(alice);
         vm.expectRevert(ResourcePool.PoolSettled.selector);
         pool.bindAgentId(1);
@@ -466,12 +482,12 @@ contract ResourcePoolTest is Test {
 
     function test_reputationRevertDoesNotBrickSettle() public {
         ResourcePool noRegistry =
-            new ResourcePool(address(usdc), provider, TARGET, deadline, address(0), "", 10);
+            new ResourcePool(address(usdc), provider, TARGET, deadline, address(0), "", 10, 10);
         vm.startPrank(alice);
         usdc.approve(address(noRegistry), TARGET);
-        noRegistry.commit(TARGET);
+        noRegistry.commit(TARGET); // filling commit pays inline even with no registry
         vm.stopPrank();
-        noRegistry.settle();
+        assertTrue(noRegistry.settled());
         assertEq(usdc.balanceOf(provider), TARGET);
     }
 
@@ -480,16 +496,28 @@ contract ResourcePoolTest is Test {
     function test_resourceURIStoredImmutable() public view {
         assertEq(pool.resourceURI(), "ipfs://test-resource");
         assertEq(pool.maxParticipants(), 10);
+        assertEq(pool.maxParticipantsCap(), 10);
+        assertEq(pool.currentRoundId(), 1);
     }
 
     function test_zeroMaxParticipantsReverts() public {
         vm.expectRevert(ResourcePool.BadMaxParticipants.selector);
-        new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "", 0);
+        new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "", 0, 10);
+    }
+
+    function test_zeroCapReverts() public {
+        vm.expectRevert(ResourcePool.BadMaxParticipants.selector);
+        new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "", 10, 0);
+    }
+
+    function test_roundMaxAboveCapReverts() public {
+        vm.expectRevert(abi.encodeWithSelector(ResourcePool.CapExceeded.selector, 11, 10));
+        new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "", 11, 10);
     }
 
     function test_commitBeyondMaxParticipantsReverts() public {
         ResourcePool small =
-            new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "", 2);
+            new ResourcePool(address(usdc), provider, TARGET, deadline, address(rep), "", 2, 2);
         address dave = makeAddr("dave");
         usdc.mint(dave, 100_000_000);
 
@@ -516,5 +544,206 @@ contract ResourcePoolTest is Test {
         small.commit(1_000_000);
         vm.stopPrank();
         assertEq(small.totalCommitted(), 3_000_000);
+    }
+
+    // --- Rounds: reusable singleton ----------------------------------------------
+
+    function test_startRoundOnlyProvider() public {
+        // Round 1 is open: even the provider cannot open round 2 yet, and a
+        // stranger is rejected on auth first.
+        vm.prank(alice);
+        vm.expectRevert(ResourcePool.NotProvider.selector);
+        pool.startRound(TARGET, 1 hours, 10);
+
+        // Fill round 1 (inline auto-settle) so it is terminal.
+        _commit(alice, TARGET);
+        assertTrue(pool.settled());
+
+        vm.prank(alice);
+        vm.expectRevert(ResourcePool.NotProvider.selector);
+        pool.startRound(TARGET, 1 hours, 10);
+
+        uint64 expectedDeadline = uint64(block.timestamp) + 1 hours;
+        vm.expectEmit(true, false, false, true);
+        emit RoundStarted(2, TARGET, expectedDeadline, 10);
+        vm.prank(provider);
+        pool.startRound(TARGET, 1 hours, 10);
+
+        assertEq(pool.currentRoundId(), 2);
+        assertEq(pool.target(), TARGET);
+        assertEq(pool.totalCommitted(), 0);
+    }
+
+    function test_startRoundWhileOpenReverts() public {
+        _commit(alice, 1_000_000);
+        vm.prank(provider);
+        vm.expectRevert(ResourcePool.RoundOpen.selector);
+        pool.startRound(TARGET, 1 hours, 10);
+    }
+
+    function test_startRoundValidations() public {
+        // Param validation fires before the terminal-state check, so these
+        // revert even while round 1 is still open.
+        vm.startPrank(provider);
+        vm.expectRevert(ResourcePool.ZeroTarget.selector);
+        pool.startRound(0, 1 hours, 10);
+        vm.expectRevert(abi.encodeWithSelector(ResourcePool.BadDuration.selector, 0));
+        pool.startRound(TARGET, 0, 10);
+        vm.expectRevert(abi.encodeWithSelector(ResourcePool.BadDuration.selector, 2 hours + 1));
+        pool.startRound(TARGET, 2 hours + 1, 10);
+        vm.expectRevert(ResourcePool.BadMaxParticipants.selector);
+        pool.startRound(TARGET, 1 hours, 0);
+        vm.expectRevert(abi.encodeWithSelector(ResourcePool.CapExceeded.selector, 11, 10));
+        pool.startRound(TARGET, 1 hours, 11);
+        vm.stopPrank();
+
+        // Expired-but-unfinalized round 1 must be finalized first.
+        _commit(alice, 1_000_000);
+        vm.warp(deadline + 1);
+        vm.prank(provider);
+        vm.expectRevert(ResourcePool.RoundNotTerminal.selector);
+        pool.startRound(TARGET, 1 hours, 10);
+
+        pool.finalizeExpired();
+        vm.prank(provider);
+        pool.startRound(TARGET, 1 hours, 5);
+        assertEq(pool.currentRoundId(), 2);
+        assertEq(pool.maxParticipants(), 5);
+    }
+
+    function test_commitToWrongRoundReverts() public {
+        _commit(alice, 1_000_000);
+        vm.startPrank(bob);
+        usdc.approve(address(pool), 1_000_000);
+        vm.expectRevert(ResourcePool.WrongRound.selector);
+        pool.commit(0, 1_000_000);
+        vm.expectRevert(ResourcePool.WrongRound.selector);
+        pool.commit(2, 1_000_000);
+        vm.expectRevert(ResourcePool.WrongRound.selector);
+        pool.settle(2);
+        vm.expectRevert(ResourcePool.WrongRound.selector);
+        pool.claimRefund(2);
+        vm.stopPrank();
+    }
+
+    function test_fillingCommitAutoSettlesInline() public {
+        _commit(alice, 4_000_000);
+        _commit(bob, 3_000_000);
+        assertFalse(pool.settled());
+
+        uint256 providerBefore = usdc.balanceOf(provider);
+        // No separate settle call: the filling tx itself moves the funds.
+        _commit(carol, 3_000_000);
+
+        assertTrue(pool.settled());
+        assertEq(usdc.balanceOf(provider) - providerBefore, TARGET);
+        assertEq(usdc.balanceOf(address(pool)), 0, "no stranded funds");
+    }
+
+    function test_settleFallbackIdempotent() public {
+        _commit(alice, TARGET); // inline auto-settle fired
+        assertTrue(pool.settled());
+        uint256 providerBalance = usdc.balanceOf(provider);
+
+        // Permissionless retry reverts cleanly with no state or fund movement.
+        vm.expectRevert(ResourcePool.AlreadySettled.selector);
+        pool.settle(1);
+        assertEq(usdc.balanceOf(provider), providerBalance);
+        assertEq(usdc.balanceOf(address(pool)), 0);
+    }
+
+    function test_roundIsolation_RefundOnlyOwnRound() public {
+        _commit(alice, 4_000_000);
+        _commit(bob, 2_000_000);
+        vm.warp(deadline + 1);
+        pool.finalizeExpired(1);
+
+        vm.prank(provider);
+        pool.startRound(TARGET, 1 hours, 10);
+        _commitR(carol, 2, 5_000_000);
+
+        // Per-round ledgers are isolated.
+        assertEq(pool.committed(1, bob), 2_000_000);
+        assertEq(pool.committed(2, carol), 5_000_000);
+        assertEq(pool.committed(1, carol), 0);
+        assertEq(pool.totalCommitted(), 5_000_000, "shim follows current round");
+
+        // Round-2 stake is not yet refundable (round 2 never finalized).
+        vm.prank(carol);
+        vm.expectRevert(ResourcePool.NothingToWithdraw.selector);
+        pool.claimRefund(2);
+        // Carol has no round-1 share either.
+        vm.prank(carol);
+        vm.expectRevert(ResourcePool.NothingToWithdraw.selector);
+        pool.claimRefund(1);
+
+        // Round-1 refunds still work after round 2 started, sized by round 1
+        // alone (round-2 funds are untouched).
+        uint256 bobBefore = usdc.balanceOf(bob);
+        vm.prank(bob);
+        pool.claimRefund(1);
+        assertEq(usdc.balanceOf(bob) - bobBefore, 2_000_000);
+        assertEq(usdc.balanceOf(address(pool)), 4_000_000 + 5_000_000);
+    }
+
+    function test_expiredRoundThenNextRoundStarts() public {
+        _commit(alice, 1_000_000);
+        vm.warp(deadline + 1);
+        assertTrue(pool.expired());
+        pool.finalizeExpired();
+
+        vm.prank(provider);
+        pool.startRound(TARGET, 1 hours, 5);
+
+        assertEq(pool.currentRoundId(), 2);
+        assertFalse(pool.expired(), "fresh round is not expired");
+        assertEq(pool.totalCommitted(), 0);
+        assertEq(pool.participantCount(), 0);
+
+        _commitR(bob, 2, 2_000_000);
+        assertEq(pool.totalCommitted(), 2_000_000);
+        assertEq(pool.participantCount(), 1);
+    }
+
+    function test_feedbackCursorPerRound() public {
+        _commit(alice, 4_000_000);
+        vm.prank(alice);
+        pool.bindAgentId(1, 1);
+        _commit(bob, 3_000_000);
+        vm.prank(bob);
+        pool.bindAgentId(1, 2);
+        _commit(carol, 3_000_000); // inline auto-settle, round 1 terminal
+
+        pool.recordCompletions(1, 10);
+        assertEq(pool.feedbackCursor(), 3);
+
+        vm.prank(provider);
+        pool.startRound(TARGET, 1 hours, 10);
+        assertEq(pool.feedbackCursor(), 0, "cursor is per-round");
+        // Round 2 is unsettled: pagination there is closed.
+        vm.expectRevert(ResourcePool.NotSettled.selector);
+        pool.recordCompletions(2, 10);
+        // Round-1 cursor is preserved and past-the-end is a no-op.
+        pool.recordCompletions(1, 10);
+    }
+
+    function testFuzz_commitNeverExceedsTargetPerRound(uint256 x, uint256 y) public {
+        uint256 a = bound(x, 1, TARGET);
+        uint256 b = bound(y, 1, TARGET);
+
+        _commitR(alice, 1, a);
+        assertLe(pool.totalCommitted(), TARGET, "round total capped at target");
+
+        vm.startPrank(bob);
+        usdc.approve(address(pool), b);
+        try pool.commit(1, b) {} catch (bytes memory) {}
+        vm.stopPrank();
+
+        assertLe(pool.totalCommitted(), TARGET, "round total never exceeds target");
+        assertLe(pool.committed(1, alice) + pool.committed(1, bob), TARGET);
+        if (pool.settled()) {
+            assertEq(usdc.balanceOf(address(pool)), 0, "settled round holds nothing");
+            assertEq(usdc.balanceOf(provider), pool.totalCommitted());
+        }
     }
 }

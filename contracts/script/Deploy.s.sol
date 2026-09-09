@@ -14,8 +14,13 @@ import {ResourcePool} from "../src/ResourcePool.sol";
 ///   REPUTATION_REGISTRY ERC-8004 ReputationRegistry (Arc testnet: 0x8004B663056A597Dffe9eCcC1965A193B7388713)
 ///   RESOURCE_URI        off-chain resource description + terms, e.g. ipfs://... (empty = unpublished;
 ///                       immutable once deployed, so decide before deploy, not after)
-///   MAX_PARTICIPANTS    hard cap on distinct committers; bounds iteration on every path
+///   MAX_PARTICIPANTS    hard cap on distinct committers for the round-1 seed;
+///                       bounds iteration on every path
 ///                       (default 200 — sizing for the hundred-agent README scale with headroom)
+///   MAX_PARTICIPANTS_CAP deploy-time ceiling for EVERY round's maxParticipants
+///                       (startRound reverts CapExceeded above it; defaults to MAX_PARTICIPANTS)
+///                       Later rounds supply their own target/duration/maxParticipants via
+///                       startRound — TARGET/DEADLINE below only seed round 1.
 ///
 /// Dry run (no keys needed):
 ///   USDC=0x3600000000000000000000000000000000000000 PROVIDER=0x... TARGET=10000000 \
@@ -35,9 +40,12 @@ contract Deploy is Script {
         address reputationRegistry = vm.envAddress("REPUTATION_REGISTRY");
         string memory resourceURI = vm.envOr("RESOURCE_URI", string(""));
         uint256 maxParticipants = vm.envOr("MAX_PARTICIPANTS", uint256(200));
+        uint256 maxParticipantsCap = vm.envOr("MAX_PARTICIPANTS_CAP", maxParticipants);
 
         vm.startBroadcast();
-        pool = new ResourcePool(usdc, provider, target, deadline, reputationRegistry, resourceURI, maxParticipants);
+        pool = new ResourcePool(
+            usdc, provider, target, deadline, reputationRegistry, resourceURI, maxParticipants, maxParticipantsCap
+        );
         vm.stopBroadcast();
     }
 }
