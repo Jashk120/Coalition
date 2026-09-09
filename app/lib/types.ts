@@ -174,6 +174,36 @@ export type FreePoolResponse =
   | { readonly ok: false; readonly error: string };
 
 /**
+ * Per-agent compute usage snapshot from the orchestrator (GET /usage).
+ * Plain JSON numbers — no bigints cross this endpoint.
+ */
+export type AgentUsageView = {
+  readonly wallet: string;
+  readonly cpu: number;
+  readonly memMB: number;
+  readonly cuSeconds: number;
+  readonly mbHours: number;
+  readonly budgetCUSeconds: number;
+  readonly budgetMBHours: number;
+  readonly remainingCUSeconds: number;
+  readonly remainingMBHours: number;
+  readonly percentUsedCU: number;
+  readonly percentUsedMB: number;
+  readonly hasContainer: boolean;
+  readonly settled: boolean;
+};
+
+/** Orchestrator usage relay (GET /api/usage → GET /usage). Public, no APP_KEY. */
+export type UsageResponse =
+  | {
+      readonly ok: true;
+      readonly agents: readonly AgentUsageView[];
+      readonly settled: boolean;
+      readonly windowHours: number;
+    }
+  | { readonly ok: false; readonly error: string };
+
+/**
  * ENSv2 Enhanced Access Control demo (POST /api/ens/delegate):
  * grant → agent write → revoke → revoked write fails. Hashes are 0x tx hashes;
  * revokedWriteError carries the captured revert as proof the grant was loadbearing.

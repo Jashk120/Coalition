@@ -7,6 +7,7 @@ import type {
   ActivityEvent,
   ActivityResponse,
   AgentsResponse,
+  AgentUsageView,
   FreePoolResponse,
   FundResponse,
   NamespacesResponse,
@@ -15,6 +16,7 @@ import type {
   FundStep,
   ResolutionView,
   RoundView,
+  UsageResponse,
 } from "@/lib/types";
 
 type QuoteState =
@@ -37,6 +39,16 @@ type AgentQuoteState = {
 type ActivityState =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly events: readonly ActivityEvent[] }
+  | { readonly status: "error"; readonly message: string };
+
+type UsageState =
+  | { readonly status: "loading" }
+  | {
+      readonly status: "ready";
+      readonly agents: readonly AgentUsageView[];
+      readonly settled: boolean;
+      readonly windowHours: number;
+    }
   | { readonly status: "error"; readonly message: string };
 
 type QuotePayload =
@@ -91,6 +103,15 @@ function fillPercent(committed: string, target: string): number {
   } catch {
     return 0;
   }
+}
+
+function clampPercent(value: number): number {
+  if (Number.isNaN(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
+function formatUsage(value: number): string {
+  return Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
 function resolutionFor(
@@ -152,6 +173,7 @@ export default function DashboardPage() {
   const [freeResult, setFreeResult] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<readonly AgentQuoteState[]>([]);
   const [activity, setActivity] = useState<ActivityState>({ status: "loading" });
+  const [usage, setUsage] = useState<UsageState>({ status: "loading" });
   const [terms, setTerms] = useState<TermsState>({ status: "loading" });
   const [namespaces, setNamespaces] = useState<readonly NamespaceView[] | null>(
     null,
@@ -175,6 +197,45 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const loadActivity = useCallback(async () => {
+    try {
+      const activityRes = await fetch("/api/activity", { cache: "no-store" });
+      const activityBody = (await parseJson(activityRes)) as ActivityResponse;
+      if (activityBody.ok) {
+        setActivity({ status: "ready", events: activityBody.events });
+      } else {
+        setActivity({ status: "error", message: activityBody.error });
+      }
+    } catch (error) {
+      setActivity({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
+
+  const loadUsage = useCallback(async () => {
+    try {
+      const response = await fetch("/api/usage", { cache: "no-store" });
+      const body = (await parseJson(response)) as UsageResponse;
+      if (body.ok) {
+        setUsage({
+          status: "ready",
+          agents: Array.isArray(body.agents) ? body.agents : [],
+          settled: body.settled,
+          windowHours: body.windowHours,
+        });
+      } else {
+        setUsage({ status: "error", message: body.error });
+      }
+    } catch (error) {
+      setUsage({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
+
   const fundDemo = useCallback(async () => {
     setFunding(true);
     setFundError(null);
@@ -187,6 +248,7 @@ export default function DashboardPage() {
       if (body.ok) {
         setFundSteps(body.steps);
         await loadAgents();
+        await loadActivity();
       } else {
         setFundError(body.error);
       }
@@ -195,7 +257,7 @@ export default function DashboardPage() {
     } finally {
       setFunding(false);
     }
-  }, [loadAgents]);
+  }, [loadAgents, loadActivity]);
 
   const rotateDemo = useCallback(async () => {
     setRotating(true);
@@ -210,6 +272,7 @@ export default function DashboardPage() {
         setRotateResult(body.result);
         setFundSteps([]);
         await loadAgents();
+        await loadActivity();
       } else {
         setRotateError(body.error);
       }
@@ -218,11 +281,30 @@ export default function DashboardPage() {
     } finally {
       setRotating(false);
     }
-  }, [loadAgents]);
+  }, [loadAgents, loadActivity]);
 
   useEffect(() => {
     void loadAgents();
-  }, [loadAgents]);
+    void loadUsage();
+  }, [loadAgents, loadUsage]);
+
+  // Polling keeps the dashboard live without manual reloads: pool/round
+  // state plus orchestrator compute usage every 10s, on-chain activity
+  // every 15s (staggered so the throttle-sensitive RPC readers never fire
+  // in the same tick; usage rides the pool tick because it never hits RPC).
+  useEffect(() => {
+    const agentsTimer = setInterval(() => {
+      void loadAgents();
+      void loadUsage();
+    }, 10_000);
+    const activityTimer = setInterval(() => {
+      void loadActivity();
+    }, 15_000);
+    return () => {
+      clearInterval(agentsTimer);
+      clearInterval(activityTimer);
+    };
+  }, [loadAgents, loadUsage, loadActivity]);
 
   const loadNamespaces = useCallback(async () => {
     try {
@@ -244,23 +326,6 @@ export default function DashboardPage() {
   useEffect(() => {
     void loadNamespaces();
   }, [loadNamespaces]);
-
-  const loadActivity = useCallback(async () => {
-    try {
-      const activityRes = await fetch("/api/activity", { cache: "no-store" });
-      const activityBody = (await parseJson(activityRes)) as ActivityResponse;
-      if (activityBody.ok) {
-        setActivity({ status: "ready", events: activityBody.events });
-      } else {
-        setActivity({ status: "error", message: activityBody.error });
-      }
-    } catch (error) {
-      setActivity({
-        status: "error",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -370,7 +435,8 @@ export default function DashboardPage() {
         <h1>Coalition — Pool Dashboard</h1>
         <p>
           4-agent funding demo on Arc 5042002. Fund on-chain writes real
-          approve+commit transactions via Circle wallets.
+          approve+commit transactions via Circle wallets. Live — pool state
+          and compute usage refresh every 10s, on-chain activity every 15s.
         </p>
       </header>
 
@@ -406,6 +472,157 @@ export default function DashboardPage() {
             ) : null}
           </>
         )}
+      </section>
+
+      <section className="card" aria-label="Live compute usage">
+        <h2>Live Compute Usage</h2>
+        {usage.status === "loading" ? (
+          <div className="state">Loading live usage…</div>
+        ) : usage.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Usage unavailable: {usage.message}
+          </div>
+        ) : usage.agents.length === 0 ? (
+          <div className="state">
+            No usage yet — containers appear after settle → allocate.
+          </div>
+        ) : (
+          <>
+            <div>
+              <span className={usage.settled ? "pill pill-ok" : "pill"}>
+                {usage.settled ? "settled" : "open"}
+              </span>{" "}
+              <span className="fill-label">
+                {usage.agents.length} agent(s) · trailing {usage.windowHours}h
+                · refreshed every 10s
+              </span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    <th>Slice</th>
+                    <th>CU-seconds used vs budget</th>
+                    <th>MB-hours used vs budget</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usage.agents.map((agent) => {
+                    const overBudget =
+                      agent.percentUsedCU >= 100 || agent.percentUsedMB >= 100;
+                    return (
+                      <tr key={agent.wallet}>
+                        <td className="mono">{shortAddress(agent.wallet)}</td>
+                        <td>
+                          {agent.cpu.toFixed(2)} CPU · {agent.memMB} MB
+                        </td>
+                        <td>
+                          <div className="fill-track" aria-hidden="true">
+                            <div
+                              className="fill-bar"
+                              style={{
+                                width: `${String(clampPercent(agent.percentUsedCU))}%`,
+                              }}
+                            />
+                          </div>
+                          <div className="fill-label">
+                            {formatUsage(agent.cuSeconds)} /{" "}
+                            {formatUsage(agent.budgetCUSeconds)} CU-s ·{" "}
+                            {formatUsage(agent.remainingCUSeconds)} left
+                          </div>
+                        </td>
+                        <td>
+                          <div className="fill-track" aria-hidden="true">
+                            <div
+                              className="fill-bar"
+                              style={{
+                                width: `${String(clampPercent(agent.percentUsedMB))}%`,
+                              }}
+                            />
+                          </div>
+                          <div className="fill-label">
+                            {formatUsage(agent.mbHours)} /{" "}
+                            {formatUsage(agent.budgetMBHours)} MB-h ·{" "}
+                            {formatUsage(agent.remainingMBHours)} left
+                          </div>
+                        </td>
+                        <td>
+                          <span
+                            className={
+                              overBudget
+                                ? "pill pill-bad"
+                                : agent.settled
+                                  ? "pill pill-ok"
+                                  : agent.hasContainer
+                                    ? "pill pill-ok"
+                                    : "pill pill-warn"
+                            }
+                          >
+                            {overBudget
+                              ? "over budget"
+                              : agent.settled
+                                ? "settled"
+                                : agent.hasContainer
+                                  ? "active"
+                                  : "no container"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        <details>
+          <summary className="fill-label">
+            Resale pricing ({quotes.length} agents)
+          </summary>
+          {quotes.length === 0 ? (
+            <div className="state">Loading resale quotes…</div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    <th>Resale quote</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quotes.map((row) => (
+                    <tr key={row.wallet}>
+                      <td>
+                        <div className="mono">{row.ensName}</div>
+                        <div className="mono">{shortAddress(row.wallet)}</div>
+                      </td>
+                      <td>
+                        {row.quote.status === "ready" ? (
+                          <span className="fill-label">
+                            {row.quote.summary}
+                          </span>
+                        ) : row.quote.status === "empty" ? (
+                          <span className="state">
+                            Not allocated — {row.quote.reason}
+                          </span>
+                        ) : row.quote.status === "error" ? (
+                          <span className="state state-error" role="alert">
+                            Quote unavailable: {row.quote.message}
+                          </span>
+                        ) : (
+                          <span className="state">Loading…</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </details>
       </section>
 
       <section className="card" aria-label="Live round">
@@ -661,45 +878,42 @@ export default function DashboardPage() {
         )}
       </section>
 
-      <div className="grid-two">
-        <section className="card" aria-label="Demo funding">
-          <h2>Demo — fund on-chain</h2>
-          <p className="fill-label">
-            Runs the 4 agents sequentially: live round gate, then real USDC
-            approve+commit per Circle wallet. Each step appends below with
-            on-chain hashes.
-          </p>
-          <button
-            className="trigger"
-            type="button"
-            onClick={() => void fundDemo()}
-            disabled={funding}
-          >
-            {funding ? "Funding…" : "Fund on-chain"}
-          </button>
-          {fundError !== null ? (
-            <div className="state state-error" role="alert">
-              Fund failed: {fundError}
-            </div>
-          ) : null}
-        </section>
-
-        <section className="card" aria-label="Outside buyer">
-          <h2>Outside buyer</h2>
-          <p className="fill-label">
-            Held out of the funding loop — prices spare capacity via quotes,
-            never commits.
-          </p>
-          <div className="mono">{OUTSIDE_BUYER.wallet}</div>
-          <div className="mono">{OUTSIDE_BUYER.ensName}</div>
-        </section>
-      </div>
-
-      <section className="card" aria-label="Container pool">
-        <h2>Container pool</h2>
+      <section className="card" aria-label="Demo controls">
+        <h2>Demo controls</h2>
         <p className="fill-label">
-          Resets the orchestrator container pool via POST /free-pool so judges
-          can reuse the same pool for the next test run.
+          Runs the 4 agents sequentially: live round gate, then real USDC
+          approve+commit per Circle wallet. Each step appends in the pool
+          controls below with on-chain hashes.
+        </p>
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void fundDemo()}
+          disabled={funding}
+        >
+          {funding ? "Funding…" : "Fund on-chain"}
+        </button>
+        {fundError !== null ? (
+          <div className="state state-error" role="alert">
+            Fund failed: {fundError}
+          </div>
+        ) : null}
+        <p className="fill-label">
+          Outside buyer — held out of the funding loop, prices spare capacity
+          via quotes, never commits.
+        </p>
+        <div className="mono">{OUTSIDE_BUYER.wallet}</div>
+        <div className="mono">{OUTSIDE_BUYER.ensName}</div>
+      </section>
+
+      <section className="card" aria-label="Pool controls and funding results">
+        <h2>Pool controls + funding results</h2>
+        <p className="fill-label">
+          Free pool resets the orchestrator container pool so judges can reuse
+          it for the next test run. Rotate closes a finished round and opens
+          the next one (provider wallet required; refused with a countdown
+          while a round is still fundable). Steps from the last Fund on-chain
+          run need CIRCLE_* server env.
         </p>
         <button
           className="trigger"
@@ -708,6 +922,14 @@ export default function DashboardPage() {
           disabled={freeing}
         >
           {freeing ? "Freeing…" : "Free Pool"}
+        </button>{" "}
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void rotateDemo()}
+          disabled={rotating}
+        >
+          {rotating ? "Rotating…" : "Rotate pool"}
         </button>
         {freeError !== null ? (
           <div className="state state-error" role="alert">
@@ -717,26 +939,6 @@ export default function DashboardPage() {
         {freeResult !== null ? (
           <div className="state">Pool freed: {freeResult}</div>
         ) : null}
-      </section>
-
-      <section className="card" aria-label="Funding results">
-        <h2>Funding results</h2>
-        <p className="fill-label">
-          Steps from the last Fund on-chain run; needs CIRCLE_* server env.
-        </p>
-        <p className="fill-label">
-          Free pool closes a finished round and opens the next one for a
-          fresh test run (provider wallet required). Refused with a
-          countdown while a round is still fundable.
-        </p>
-        <button
-          className="trigger"
-          type="button"
-          onClick={() => void rotateDemo()}
-          disabled={rotating}
-        >
-          {rotating ? "Freeing…" : "Free pool"}
-        </button>
         {rotateError !== null ? (
           <div className="state state-error" role="alert">
             Rotate failed: {rotateError}
@@ -886,69 +1088,21 @@ export default function DashboardPage() {
         )}
       </section>
 
-      <div className="grid-two">
-        <section className="card" aria-label="Usage and budget">
-          <h2>Usage / budget</h2>
-          {quotes.length === 0 ? (
-            <div className="state">Loading resale quotes…</div>
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Agent</th>
-                    <th>Orchestrator quota</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {quotes.map((row) => (
-                    <tr key={row.wallet}>
-                      <td>
-                        <div className="mono">{row.ensName}</div>
-                        <div className="mono">{shortAddress(row.wallet)}</div>
-                      </td>
-                      <td>
-                        {row.quote.status === "ready" ? (
-                          <span className="fill-label">{row.quote.summary}</span>
-                        ) : row.quote.status === "empty" ? (
-                          <span className="state">
-                            Not allocated — {row.quote.reason}
-                          </span>
-                        ) : row.quote.status === "error" ? (
-                          <span className="state state-error" role="alert">
-                            Quote unavailable: {row.quote.message}
-                          </span>
-                        ) : (
-                          <span className="state">Loading…</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <p className="fill-label">
-            Orchestrator budgets (cpu 0.70/1.0, mem 2800/4096 MB) are enforced
-            behind POST /allocate + /run. Each row quotes that agent&apos;s
-            resale pricing and remaining budgets — unknown wallet means not
-            allocated yet; remaining budgets shrink as /run usage accrues.
-          </p>
-        </section>
-
-        <section className="card" aria-label="Pool terms">
-          <h2>Pool terms</h2>
-          {terms.status === "loading" ? (
-            <div className="state">Loading terms.json…</div>
-          ) : terms.status === "error" ? (
-            <div className="state state-error" role="alert">
-              Terms unavailable: {terms.message}
-            </div>
-          ) : (
+      <section className="card" aria-label="Pool terms">
+        <h2>Pool terms</h2>
+        {terms.status === "loading" ? (
+          <div className="state">Loading terms.json…</div>
+        ) : terms.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Terms unavailable: {terms.message}
+          </div>
+        ) : (
+          <details>
+            <summary className="fill-label">View terms.json</summary>
             <pre className="terms">{terms.body}</pre>
-          )}
-        </section>
-      </div>
+          </details>
+        )}
+      </section>
     </main>
   );
 }
