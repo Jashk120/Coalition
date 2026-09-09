@@ -43,6 +43,12 @@ func (s *Server) handleAllocate(w http.ResponseWriter, r *http.Request) {
 	if !s.checkPoolGate(w, r) {
 		return
 	}
+	// Reconcile the ledger's tracked round against the chain before
+	// evaluating FundingClosed: after a rotate the poller can lag the new
+	// round, leaving the prior settled round tracked and wrongly closing
+	// funding for the fresh open round (every pre-settle allocate 409s
+	// until the round itself settles). Advance-only and fail-open.
+	s.syncCurrentRound(r.Context())
 	// Post-settle gate: settled-round participants may still allocate (the
 	// pool already paid the provider, so containers are owed), while wallets
 	// with neither a pre-settle reservation nor on-chain stake stay 409
