@@ -431,5 +431,13 @@ export async function readActivity(): Promise<readonly ActivityEvent[]> {
     }
     if (end === latest) break;
   }
-  return events.reverse();
+  const byTx = new Map<string, ActivityEvent>();
+  for (const event of events) {
+    const key = `${event.blockNumber}-${event.txHash}-${event.kind}`;
+    const prev = byTx.get(key);
+    if (prev === undefined || (prev.roundId === undefined && event.roundId !== undefined)) {
+      byTx.set(key, event);
+    }
+  }
+  return [...byTx.values()].reverse();
 }

@@ -30,6 +30,71 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+/** Seed identity changes rarely: cache briefly so reload bursts don't throttle the public RPC. */
+const RESOLUTION_CACHE_TTL_MS = 300_000;
+let resolutionCache: {
+  readonly at: number;
+  readonly resolutions: readonly ResolutionView[];
+} | null = null;
+
+function isRateLimit(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /rate limit|exceeds defined limit|too many requests|429/i.test(message);
+}
+
+/** First-line-only failure reason: raw viem blobs would flood the UI. */
+function shortReason(error: unknown): string {
+  const first = errorMessage(error).split("\n")[0] ?? "unknown error";
+  return first.length > 160 ? `${first.slice(0, 157)}...` : first;
+}
+
+/** Live resolution with backoff: a throttled attempt waits 1.5s/3s/6s before retrying. */
+async function resolveWithRetry(
+  reviewers: readonly Address[],
+): Promise<readonly ResolutionView[]> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      const live = await logTimed(
+        "agents.resolve",
+        { route: "GET /api/agents", agents: DEMO_SEED_AGENTS.length },
+        () =>
+          withTimeout(
+            resolveSeedAgents({
+              sepoliaClient: sepoliaPublicClient(),
+              arcClient: arcPublicClient(),
+              seeds: DEMO_SEED_AGENTS,
+              reviewers,
+              fromBlock: IDENTITY_REGISTRY_FROM_BLOCK,
+            }),
+            45_000,
+            "resolveSeedAgents",
+          ),
+      );
+      return live.map((entry): ResolutionView => {
+        if (entry.status === "resolved") {
+          return {
+            seedId: entry.seed.id,
+            status: "resolved",
+            arcWallet: entry.arcWallet,
+            agentCount: entry.agents.length,
+          };
+        }
+        return {
+          seedId: entry.seed.id,
+          status: "skipped",
+          reason: entry.reason,
+          fallbackWallet: entry.fallbackWallet,
+        };
+      });
+    } catch (error) {
+      if (!isRateLimit(error) || attempt >= 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1500 * 2 ** attempt));
+      attempt += 1;
+    }
+  }
+}
+
 /**
  * GET /api/agents — live seed resolution plus pool funding state.
  * ENS-first `resolveSeedAgents` in seed order; any network failure degrades
@@ -45,53 +110,30 @@ export async function GET(): Promise<NextResponse<AgentsResponse>> {
       : [...seedWallets];
 
   let resolutions: readonly ResolutionView[];
-  try {
-    const live = await logTimed(
-      "agents.resolve",
-      { route: "GET /api/agents", agents: DEMO_SEED_AGENTS.length },
-      () =>
-        withTimeout(
-          resolveSeedAgents({
-            sepoliaClient: sepoliaPublicClient(),
-            arcClient: arcPublicClient(),
-            seeds: DEMO_SEED_AGENTS,
-            reviewers,
-            fromBlock: IDENTITY_REGISTRY_FROM_BLOCK,
-          }),
-          25_000,
-          "resolveSeedAgents",
-        ),
-    );
-    resolutions = live.map((entry): ResolutionView => {
-      if (entry.status === "resolved") {
-        return {
-          seedId: entry.seed.id,
-          status: "resolved",
-          arcWallet: entry.arcWallet,
-          agentCount: entry.agents.length,
-        };
-      }
-      return {
-        seedId: entry.seed.id,
-        status: "skipped",
-        reason: entry.reason,
-        fallbackWallet: entry.fallbackWallet,
-      };
-    });
-  } catch (error) {
-    const reason = `live resolution unavailable (${errorMessage(error)}); showing seed fallbacks`;
-    log("warn", "agents.resolve.fallback", {
-      route: "GET /api/agents",
-      reason,
-    });
-    resolutions = SEED_META.map(
-      (seed): ResolutionView => ({
-        seedId: seed.id,
-        status: "skipped",
+  const servedCached =
+    resolutionCache !== null &&
+    Date.now() - resolutionCache.at < RESOLUTION_CACHE_TTL_MS;
+  if (servedCached && resolutionCache !== null) {
+    resolutions = resolutionCache.resolutions;
+  } else {
+    try {
+      resolutions = await resolveWithRetry(reviewers);
+      resolutionCache = { at: Date.now(), resolutions };
+    } catch (error) {
+      const reason = `live resolution unavailable (${shortReason(error)}); showing seed fallbacks`;
+      log("warn", "agents.resolve.fallback", {
+        route: "GET /api/agents",
         reason,
-        fallbackWallet: seed.wallet,
-      }),
-    );
+      });
+      resolutions = SEED_META.map(
+        (seed): ResolutionView => ({
+          seedId: seed.id,
+          status: "skipped",
+          reason,
+          fallbackWallet: seed.wallet,
+        }),
+      );
+    }
   }
 
   const pool = await readPoolState();
@@ -102,6 +144,7 @@ export async function GET(): Promise<NextResponse<AgentsResponse>> {
     route: "GET /api/agents",
     resolved,
     skipped: resolutions.length - resolved,
+    cached: servedCached,
     poolSource: pool.source,
     roundId: round.view.roundId,
     roundSource: round.source,
