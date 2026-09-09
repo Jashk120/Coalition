@@ -13,6 +13,7 @@ export function coalitionSdk(): string {
 
 export * from "./chains/index.js";
 export * from "./demo/index.js";
+export * from "./discovery/index.js";
 export * from "./ens/index.js";
 export * from "./graph/index.js";
 export * from "./identity/index.js";
