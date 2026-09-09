@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { Address } from "viem";
-import { fromAtomicUsdc, wouldExceedTarget } from "@jx-nexus/coalition";
+import { fromAtomicUsdc } from "@jx-nexus/coalition";
 import { POOL_ADDRESS, SHARE_ATOMIC } from "@/lib/constants";
 import {
   USDC_ADDRESS,
@@ -29,12 +29,15 @@ function errorMessage(error: unknown): string {
 export async function POST(): Promise<NextResponse<FundResponse>> {
   const env = readCircleEnv();
   if (!env.ok) {
+    log("error", "agents.fund.missing_env", {
+      route: "POST /api/agents/fund",
+      error: env.error,
+    });
     return NextResponse.json({ ok: false, error: env.error }, { status: 503 });
   }
 
   const started = Date.now();
   const client = createCircleClient(env.apiKey, env.entitySecret);
-  const shareAmount = SHARE_ATOMIC.toString();
   log("info", "agents.fund.start", {
     route: "POST /api/agents/fund",
     wallets: env.walletIds.length,
@@ -44,7 +47,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
   try {
     const steps: FundStep[] = [];
     let fundedRoundId: string | undefined;
-    for (const walletId of env.walletIds) {
+    for (const [index, walletId] of env.walletIds.entries()) {
       try {
         const round = await readCurrentRound();
         const roundId = round.view.roundId;
@@ -71,22 +74,19 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           continue;
         }
 
-        if (
-          wouldExceedTarget(
-            {
-              target,
-              totalCommitted,
-              settled,
-              expired,
-              participantCount: BigInt(round.view.participantCount),
-            },
-            SHARE_ATOMIC,
-          )
-        ) {
+        // Dynamic fill: split whatever is left across the wallets still
+        // to run, capped at the standard share. A fixed 20 USDC share
+        // against a 10 USDC round used to skip every wallet — now the
+        // remainder is divided up (e.g. 5 USDC left across 4 wallets puts
+        // in ~1.25 USDC each). The live total is re-read each iteration
+        // so later wallets split the new remainder.
+        const walletsLeft = env.walletIds.length - index;
+        const remaining = target > totalCommitted ? target - totalCommitted : 0n;
+        if (remaining <= 0n) {
           const step: FundStep = {
             walletId,
             decision: "skipped",
-            reason: `skip: would exceed ${fromAtomicUsdc(target)} target`,
+            reason: `skip: round ${roundId} already at ${fromAtomicUsdc(target)} target`,
             roundId,
             approveTxHash: null,
             commitTxHash: null,
@@ -99,7 +99,13 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           });
           continue;
         }
+        let amount = SHARE_ATOMIC;
+        const evenSplit = remaining / BigInt(walletsLeft);
+        if (evenSplit < amount) amount = evenSplit > 0n ? evenSplit : remaining;
 
+        // Check what this wallet has already committed in this round and
+        // fund only the delta so re-running fund is idempotent and partial
+        // commits (from a previous interrupted run) are topped up correctly.
         const walletAddress = await getWalletAddress(client, walletId);
         if (walletAddress !== null) {
           const committed = await readCommitted(
@@ -107,23 +113,36 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             walletAddress as Address,
           );
           if (committed !== null && committed > 0n) {
-            const step: FundStep = {
+            const topUp = amount > committed ? amount - committed : 0n;
+            if (topUp <= 0n) {
+              // Wallet has already covered its share — nothing more to send.
+              const step: FundStep = {
+                walletId,
+                decision: "skipped",
+                reason: `skip: already funded ${fromAtomicUsdc(committed)} USDC in round ${roundId} (share fully covered)`,
+                roundId,
+                approveTxHash: null,
+                commitTxHash: null,
+              };
+              steps.push(step);
+              log("info", "agents.fund.step", {
+                walletId,
+                decision: step.decision,
+                reason: step.reason,
+              });
+              continue;
+            }
+            // Partially committed — fund just the remaining delta.
+            amount = topUp;
+            log("info", "agents.fund.top_up", {
               walletId,
-              decision: "skipped",
-              reason: `skip: already funded ${fromAtomicUsdc(committed)} USDC in round ${roundId}`,
+              alreadyCommitted: fromAtomicUsdc(committed),
+              topUp: fromAtomicUsdc(topUp),
               roundId,
-              approveTxHash: null,
-              commitTxHash: null,
-            };
-            steps.push(step);
-            log("info", "agents.fund.step", {
-              walletId,
-              decision: step.decision,
-              reason: step.reason,
             });
-            continue;
           }
         }
+        const shareAmount = amount.toString();
 
         const approve = await executeContractAndWait(client, {
           walletId,
@@ -185,7 +204,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         const step: FundStep = {
           walletId,
           decision: "funded",
-          reason: `funded +${fromAtomicUsdc(SHARE_ATOMIC)} USDC to round ${roundId}`,
+          reason: `funded +${fromAtomicUsdc(amount)} USDC to round ${roundId}`,
           roundId,
           approveTxHash: approve.txHash,
           commitTxHash: commit.txHash,
@@ -233,7 +252,12 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
       steps,
     });
   } catch (error) {
-    const body: FundResponse = { ok: false, error: errorMessage(error) };
+    const message = errorMessage(error);
+    log("error", "agents.fund.error", {
+      route: "POST /api/agents/fund",
+      error: message,
+    });
+    const body: FundResponse = { ok: false, error: message };
     return NextResponse.json(body, { status: 500 });
   }
 }
