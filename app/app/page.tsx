@@ -458,6 +458,167 @@ export default function DashboardPage() {
         </p>
       </header>
 
+      <section className="card" aria-label="Demo controls">
+        <h2>Demo controls</h2>
+        <p className="fill-label">
+          Runs the 4 agents sequentially: live round gate, then real USDC
+          approve+commit per Circle wallet. Each step appends in the pool
+          controls card with on-chain hashes.
+        </p>
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void fundDemo()}
+          disabled={funding}
+        >
+          {funding ? "Funding…" : "Fund on-chain"}
+        </button>
+        {fundError !== null ? (
+          <div className="state state-error" role="alert">
+            Fund failed: {fundError}
+          </div>
+        ) : null}
+        <p className="fill-label">
+          Outside buyer — held out of the funding loop, prices spare capacity
+          via quotes, never commits.
+        </p>
+        <div className="mono">{OUTSIDE_BUYER.wallet}</div>
+        <div className="mono">{OUTSIDE_BUYER.ensName}</div>
+      </section>
+
+      <section className="card" aria-label="Pool controls and funding results">
+        <h2>Pool controls + funding results</h2>
+        <p className="fill-label">
+          Free pool resets the whole demo loop in one click: containers are
+          revoked, the finished round is closed, and a fresh round opens for
+          new agents (provider wallet required for the new round; refused
+          with a countdown while a round is still fundable). Rotate pool
+          alone only opens the next round without touching containers.
+          Steps from the last Fund on-chain run need CIRCLE_* server env.
+        </p>
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void freePool()}
+          disabled={freeing}
+        >
+          {freeing ? "Freeing…" : "Free Pool"}
+        </button>{" "}
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void rotateDemo()}
+          disabled={rotating}
+        >
+          {rotating ? "Rotating…" : "Rotate pool"}
+        </button>
+        {freeError !== null ? (
+          <div className="state state-error" role="alert">
+            Free pool failed: {freeError}
+          </div>
+        ) : null}
+        {freeResult !== null ? (
+          <div className="state">Pool freed: {freeResult}</div>
+        ) : null}
+        {rotateError !== null ? (
+          <div className="state state-error" role="alert">
+            Rotate failed: {rotateError}
+          </div>
+        ) : null}
+        {rotateResult !== null ? (
+          <div className="state">
+            Round {rotateResult.closedRoundId} → {rotateResult.newRoundId}
+            {rotateResult.finalizeTxHash !== null ? (
+              <span className="mono">
+                {" "}
+                <a
+                  href={`${EXPLORER_URL}/tx/${rotateResult.finalizeTxHash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  finalize {shortAddress(rotateResult.finalizeTxHash)}
+                </a>
+              </span>
+            ) : null}{" "}
+            <span className="mono">
+              <a
+                href={`${EXPLORER_URL}/tx/${rotateResult.startRoundTxHash}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                startRound {shortAddress(rotateResult.startRoundTxHash)}
+              </a>
+            </span>
+          </div>
+        ) : null}
+        {fundSteps.length === 0 ? (
+          <div className="state">No funded steps</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <tbody>
+                {fundSteps.map((step) => (
+                  <tr key={step.walletId}>
+                    <td className="mono">{shortAddress(step.walletId)}</td>
+                    <td>
+                      <span
+                        className={
+                          step.decision === "funded"
+                            ? "pill pill-ok"
+                            : step.decision === "skipped"
+                              ? "pill pill-warn"
+                              : "state state-error"
+                        }
+                      >
+                        {step.decision}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="fill-label">{step.reason}</span>
+                      {step.approveTxHash !== null ? (
+                        <div className="mono">
+                          <a
+                            href={`${EXPLORER_URL}/tx/${step.approveTxHash}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            approve {shortAddress(step.approveTxHash)}
+                          </a>
+                        </div>
+                      ) : null}
+                      {step.commitTxHash !== null ? (
+                        <div className="mono">
+                          <a
+                            href={`${EXPLORER_URL}/tx/${step.commitTxHash}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            commit {shortAddress(step.commitTxHash)}
+                          </a>
+                        </div>
+                      ) : null}
+                      {step.allocateOk !== undefined ? (
+                        <div>
+                          <span
+                            className={
+                              step.allocateOk ? "pill pill-ok" : "pill pill-bad"
+                            }
+                          >
+                            {step.allocateOk
+                              ? "allocated"
+                              : `allocate failed${step.allocateError !== undefined ? `: ${step.allocateError}` : ""}`}
+                          </span>
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <section className="card" aria-label="Pool fill">
         <h2>Pool fill</h2>
         {agentsError !== null ? (
@@ -919,166 +1080,6 @@ export default function DashboardPage() {
         )}
       </section>
 
-      <section className="card" aria-label="Demo controls">
-        <h2>Demo controls</h2>
-        <p className="fill-label">
-          Runs the 4 agents sequentially: live round gate, then real USDC
-          approve+commit per Circle wallet. Each step appends in the pool
-          controls below with on-chain hashes.
-        </p>
-        <button
-          className="trigger"
-          type="button"
-          onClick={() => void fundDemo()}
-          disabled={funding}
-        >
-          {funding ? "Funding…" : "Fund on-chain"}
-        </button>
-        {fundError !== null ? (
-          <div className="state state-error" role="alert">
-            Fund failed: {fundError}
-          </div>
-        ) : null}
-        <p className="fill-label">
-          Outside buyer — held out of the funding loop, prices spare capacity
-          via quotes, never commits.
-        </p>
-        <div className="mono">{OUTSIDE_BUYER.wallet}</div>
-        <div className="mono">{OUTSIDE_BUYER.ensName}</div>
-      </section>
-
-      <section className="card" aria-label="Pool controls and funding results">
-        <h2>Pool controls + funding results</h2>
-        <p className="fill-label">
-          Free pool resets the whole demo loop in one click: containers are
-          revoked, the finished round is closed, and a fresh round opens for
-          new agents (provider wallet required for the new round; refused
-          with a countdown while a round is still fundable). Rotate pool
-          alone only opens the next round without touching containers.
-          Steps from the last Fund on-chain run need CIRCLE_* server env.
-        </p>
-        <button
-          className="trigger"
-          type="button"
-          onClick={() => void freePool()}
-          disabled={freeing}
-        >
-          {freeing ? "Freeing…" : "Free Pool"}
-        </button>{" "}
-        <button
-          className="trigger"
-          type="button"
-          onClick={() => void rotateDemo()}
-          disabled={rotating}
-        >
-          {rotating ? "Rotating…" : "Rotate pool"}
-        </button>
-        {freeError !== null ? (
-          <div className="state state-error" role="alert">
-            Free pool failed: {freeError}
-          </div>
-        ) : null}
-        {freeResult !== null ? (
-          <div className="state">Pool freed: {freeResult}</div>
-        ) : null}
-        {rotateError !== null ? (
-          <div className="state state-error" role="alert">
-            Rotate failed: {rotateError}
-          </div>
-        ) : null}
-        {rotateResult !== null ? (
-          <div className="state">
-            Round {rotateResult.closedRoundId} → {rotateResult.newRoundId}
-            {rotateResult.finalizeTxHash !== null ? (
-              <span className="mono">
-                {" "}
-                <a
-                  href={`${EXPLORER_URL}/tx/${rotateResult.finalizeTxHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  finalize {shortAddress(rotateResult.finalizeTxHash)}
-                </a>
-              </span>
-            ) : null}{" "}
-            <span className="mono">
-              <a
-                href={`${EXPLORER_URL}/tx/${rotateResult.startRoundTxHash}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                startRound {shortAddress(rotateResult.startRoundTxHash)}
-              </a>
-            </span>
-          </div>
-        ) : null}
-        {fundSteps.length === 0 ? (
-          <div className="state">No funded steps</div>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <tbody>
-                {fundSteps.map((step) => (
-                  <tr key={step.walletId}>
-                    <td className="mono">{shortAddress(step.walletId)}</td>
-                    <td>
-                      <span
-                        className={
-                          step.decision === "funded"
-                            ? "pill pill-ok"
-                            : step.decision === "skipped"
-                              ? "pill pill-warn"
-                              : "state state-error"
-                        }
-                      >
-                        {step.decision}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="fill-label">{step.reason}</span>
-                      {step.approveTxHash !== null ? (
-                        <div className="mono">
-                          <a
-                            href={`${EXPLORER_URL}/tx/${step.approveTxHash}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            approve {shortAddress(step.approveTxHash)}
-                          </a>
-                        </div>
-                      ) : null}
-                      {step.commitTxHash !== null ? (
-                        <div className="mono">
-                          <a
-                            href={`${EXPLORER_URL}/tx/${step.commitTxHash}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            commit {shortAddress(step.commitTxHash)}
-                          </a>
-                        </div>
-                      ) : null}
-                      {step.allocateOk !== undefined ? (
-                        <div>
-                          <span
-                            className={
-                              step.allocateOk ? "pill pill-ok" : "pill pill-bad"
-                            }
-                          >
-                            {step.allocateOk
-                              ? "allocated"
-                              : `allocate failed${step.allocateError !== undefined ? `: ${step.allocateError}` : ""}`}
-                          </span>
-                        </div>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
 
       <section className="card" aria-label="On-chain activity">
         <h2>On-chain activity</h2>
