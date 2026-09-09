@@ -113,6 +113,35 @@ export type ActivityResponse =
     }
   | { readonly ok: false; readonly error: string };
 
+/** One pool member's commitment (amounts are atomic-unit decimal strings). */
+export type CommitmentView = {
+  readonly wallet: string;
+  readonly amountAtomic: string;
+  readonly blockNumber: string;
+};
+
+/** One dropout's forfeited stake (amounts are atomic-unit decimal strings). */
+export type DropoutView = {
+  readonly wallet: string;
+  readonly forfeitedAtomic: string;
+};
+
+/**
+ * Roster readout: who is in the pool (commitments) plus who forfeited
+ * (dropouts), backing the demo share-of-pool table. Subgraph-or-bust —
+ * there is no chain fallback for this data, so `ok: false` explicitly
+ * shows the Graph dependency instead of silently degrading.
+ */
+export type RosterResponse =
+  | {
+      readonly ok: true;
+      readonly pool: string;
+      readonly source: "subgraph";
+      readonly commitments: readonly CommitmentView[];
+      readonly dropouts: readonly DropoutView[];
+    }
+  | { readonly ok: false; readonly error: string };
+
 export type FundStep = { readonly walletId: string; readonly decision: "funded" | "skipped" | "failed"; readonly reason: string; readonly roundId?: string; readonly approveTxHash: string | null; readonly commitTxHash: string | null; readonly allocateOk?: boolean; readonly allocateError?: string };
 export type FundResponse = { readonly ok: true; readonly pool: string; readonly roundId?: string; readonly steps: readonly FundStep[] } | { readonly ok: false; readonly error: string };
 

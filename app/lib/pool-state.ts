@@ -3,7 +3,9 @@ import type { Address } from "viem";
 import {
   createGraphClient,
   getCommitted,
+  getCommitments,
   getCurrentRoundId,
+  getDropouts,
   getPoolFill,
   getPoolState,
   getRoundState,
@@ -13,7 +15,13 @@ import type { PoolState, RoundState } from "@jx-nexus/coalition";
 import { ROUND_HISTORY_LIMIT, TARGET_ATOMIC } from "./constants";
 import { POOL_ADDRESS, POOL_DEPLOY_BLOCK } from "./constants";
 import { arcPublicClient } from "./chain";
-import type { ActivityEvent, PoolStateView, RoundView } from "./types";
+import type {
+  ActivityEvent,
+  CommitmentView,
+  DropoutView,
+  PoolStateView,
+  RoundView,
+} from "./types";
 
 export type PoolReadout = {
   readonly view: PoolStateView;
@@ -326,6 +334,57 @@ export async function readRoundHistory(
     }
   }
   return history;
+}
+
+export type RosterReadout = {
+  readonly commitments: readonly CommitmentView[];
+  readonly dropouts: readonly DropoutView[];
+  readonly source: "subgraph";
+};
+
+/**
+ * Live roster: who is in the pool (commitments) plus who forfeited
+ * (dropouts) for the demo share-of-pool table. Subgraph-or-bust — unlike
+ * readPoolState there is no chain fallback for this data: a missing
+ * endpoint or a failed query throws so the route surfaces an explicit
+ * error showing the Graph dependency instead of silently degrading.
+ */
+export async function readRoster(): Promise<RosterReadout> {
+  const endpoint = process.env["SUBGRAPH_ENDPOINT"];
+  if (endpoint === undefined || endpoint === "") {
+    throw new Error(
+      "subgraph roster unavailable: SUBGRAPH_ENDPOINT is not configured",
+    );
+  }
+  const apiKey = process.env["SUBGRAPH_API_KEY"];
+  const client = createGraphClient({
+    endpoint,
+    ...(apiKey === undefined || apiKey === "" ? {} : { apiKey }),
+  });
+  let commitments: readonly CommitmentView[];
+  let dropouts: readonly DropoutView[];
+  try {
+    const [liveCommitments, liveDropouts] = await withTimeout(
+      Promise.all([
+        getCommitments(client, POOL_ADDRESS),
+        getDropouts(client, POOL_ADDRESS),
+      ]),
+      10_000,
+      "subgraph roster",
+    );
+    commitments = liveCommitments.map((entry) => ({
+      wallet: entry.wallet,
+      amountAtomic: entry.amount.toString(),
+      blockNumber: entry.blockNumber.toString(),
+    }));
+    dropouts = liveDropouts.map((entry) => ({
+      wallet: entry.wallet,
+      forfeitedAtomic: entry.forfeited.toString(),
+    }));
+  } catch (error) {
+    throw new Error(`subgraph roster unavailable: ${errorMessage(error)}`);
+  }
+  return { commitments, dropouts, source: "subgraph" };
 }
 
 /** Orchestrator base URL: server env wins, public env is the dev default. */
