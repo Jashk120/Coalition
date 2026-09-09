@@ -128,18 +128,42 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
   });
 
   try {
-    const steps: FundStep[] = [];
+    const slots: { readonly index: number; readonly step: FundStep }[] = [];
     let fundedRoundId: string | undefined;
-    for (const [index, walletId] of env.walletIds.entries()) {
-      try {
-        const round = await readCurrentRound();
-        const roundId = round.view.roundId;
-        const target: bigint = BigInt(round.view.target);
-        const totalCommitted: bigint = BigInt(round.view.totalCommitted);
-        const settled = round.view.settled;
-        const expired = round.view.expired;
-
-        if (settled || expired) {
+    // Phase 1 — sequential gating reads in seed order (order is the demo
+    // run order and must never change). Amounts split one snapshot
+    // remainder locally: identical math to per-iteration re-reads when
+    // nothing else commits mid-run, and it can never overshoot the target.
+    // No chain writes here.
+    type FundJob = {
+      readonly walletId: string;
+      readonly index: number;
+      readonly roundId: string;
+      readonly amount: bigint;
+      readonly shareAmount: string;
+    };
+    const jobs: FundJob[] = [];
+    const opening = await readCurrentRound().catch((): null => null);
+    if (opening === null) {
+      for (const [index, walletId] of env.walletIds.entries()) {
+        slots.push({ index, step: {
+          walletId,
+          decision: "failed",
+          reason: "failed: round read unavailable",
+          approveTxHash: null,
+          commitTxHash: null,
+        } });
+      }
+    } else {
+      const roundId = opening.view.roundId;
+      const target: bigint = BigInt(opening.view.target);
+      let remaining: bigint =
+        BigInt(opening.view.totalCommitted) < target
+          ? target - BigInt(opening.view.totalCommitted)
+          : 0n;
+      const closed = opening.view.settled || opening.view.expired;
+      for (const [index, walletId] of env.walletIds.entries()) {
+        if (closed) {
           // Repair path: funding is done but the slice may be missing
           // (earlier 409s from round-tracker lag). Proven participants can
           // still allocate post-settle, so try before skipping.
@@ -156,7 +180,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
               ? {}
               : { allocateError: allocation.error }),
           };
-          steps.push(step);
+          slots.push({ index, step });
           log("info", "agents.fund.step", {
             walletId,
             decision: step.decision,
@@ -167,13 +191,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         }
 
         // Dynamic fill: split whatever is left across the wallets still
-        // to run, capped at the standard share. A fixed 20 USDC share
-        // against a 10 USDC round used to skip every wallet — now the
-        // remainder is divided up (e.g. 5 USDC left across 4 wallets puts
-        // in ~1.25 USDC each). The live total is re-read each iteration
-        // so later wallets split the new remainder.
-        const walletsLeft = env.walletIds.length - index;
-        const remaining = target > totalCommitted ? target - totalCommitted : 0n;
+        // to run, capped at the standard share.
         if (remaining <= 0n) {
           const step: FundStep = {
             walletId,
@@ -183,7 +201,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             approveTxHash: null,
             commitTxHash: null,
           };
-          steps.push(step);
+          slots.push({ index, step });
           log("info", "agents.fund.step", {
             walletId,
             decision: step.decision,
@@ -191,6 +209,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           });
           continue;
         }
+        const walletsLeft = env.walletIds.length - index;
         let amount = SHARE_ATOMIC;
         const evenSplit = remaining / BigInt(walletsLeft);
         if (evenSplit < amount) amount = evenSplit > 0n ? evenSplit : remaining;
@@ -198,32 +217,54 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         // across runs while `amount` is this run's marginal slice, so
         // comparing them deadlocks partial fills (every wallet skips
         // while a remainder is still outstanding). Past commits are
-        // already sunk into `remaining` via the live total above.
-        const shareAmount = amount.toString();
-
-        const approve = await executeContractAndWait(client, {
+        // already sunk into `remaining` via the snapshot above.
+        remaining -= amount;
+        jobs.push({
           walletId,
+          index,
+          roundId,
+          amount,
+          shareAmount: amount.toString(),
+        });
+      }
+    }
+
+    // Phase 2 — parallel approves. Independent USDC approvals with no
+    // shared state between wallets; Promise.all preserves seed order.
+    const approvals = await Promise.all(
+      jobs.map(async (job) =>
+        executeContractAndWait(client, {
+          walletId: job.walletId,
           contractAddress: USDC_ADDRESS,
           abiFunctionSignature: "approve(address,uint256)",
-          abiParameters: [POOL_ADDRESS, shareAmount],
+          abiParameters: [POOL_ADDRESS, job.shareAmount],
+        }),
+      ),
+    );
+
+    // Phase 3 — sequential commits in seed order. Commits share the round
+    // remainder and the last one auto-settles, so they must not race.
+    for (const [jobAt, job] of jobs.entries()) {
+      const { walletId, index, roundId, amount, shareAmount } = job;
+      const approve = approvals[jobAt];
+      if (approve === undefined || !approve.ok) {
+        const step: FundStep = {
+          walletId,
+          decision: "failed",
+          reason: `approve failed: ${approve === undefined ? "missing" : approve.error}`,
+          roundId,
+          approveTxHash: null,
+          commitTxHash: null,
+        };
+        slots.push({ index, step });
+        log("info", "agents.fund.step", {
+          walletId,
+          decision: step.decision,
+          reason: step.reason,
         });
-        if (!approve.ok) {
-          const step: FundStep = {
-            walletId,
-            decision: "failed",
-            reason: `approve failed: ${approve.error}`,
-            roundId,
-            approveTxHash: null,
-            commitTxHash: null,
-          };
-          steps.push(step);
-          log("info", "agents.fund.step", {
-            walletId,
-            decision: step.decision,
-            reason: step.reason,
-          });
-          continue;
-        }
+        continue;
+      }
+      try {
 
         const commit =
           roundId === "0"
@@ -248,7 +289,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             approveTxHash: approve.txHash,
             commitTxHash: null,
           };
-          steps.push(step);
+          slots.push({ index, step });
           log("info", "agents.fund.step", {
             walletId,
             decision: step.decision,
@@ -278,7 +319,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             ? {}
             : { allocateError: allocation.error }),
         };
-        steps.push(step);
+        slots.push({ index, step });
         fundedRoundId = roundId;
         log("info", "agents.fund.step", {
           walletId,
@@ -293,13 +334,13 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         });
       } catch (error) {
         const step: FundStep = {
-          walletId,
+          walletId: job.walletId,
           decision: "failed",
           reason: `failed: ${errorMessage(error)}`,
           approveTxHash: null,
           commitTxHash: null,
         };
-        steps.push(step);
+        slots.push({ index, step });
         log("info", "agents.fund.step", {
           walletId,
           decision: step.decision,
@@ -308,6 +349,11 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
       }
     }
 
+    // Seed order is the demo run order: phases complete out of order
+    // (parallel approves, retried allocates), so reassemble by slot.
+    const steps: FundStep[] = slots
+      .sort((a, b) => a.index - b.index)
+      .map((entry) => entry.step);
     const funded = steps.filter((step) => step.decision === "funded").length;
     log("info", "agents.fund.complete", {
       route: "POST /api/agents/fund",
