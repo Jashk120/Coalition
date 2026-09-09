@@ -2,7 +2,7 @@ import type { Account, Address, Hash, PublicClient, WalletClient } from "viem";
 
 import type { AgentId } from "../identity/index.js";
 import { resourcePoolAbi } from "./abi.js";
-import type { PoolState } from "./types.js";
+import type { PoolState, RoundState } from "./types.js";
 
 export type PoolWriteParams = {
   readonly walletClient: WalletClient;
@@ -14,25 +14,39 @@ export type PoolWriteParams = {
 export type CommitToPoolParams = PoolWriteParams & {
   /** Commitment in atomic units — convert with toAtomicUsdc first. */
   readonly amount: bigint;
+  /** Round to commit to — omit to use the contract shim (currentRoundId). */
+  readonly roundId?: bigint;
 };
 
 /** Commit funds to the pool. Cap-checked off-chain with wouldExceedTarget. */
 export async function commitToPool(
   params: CommitToPoolParams,
 ): Promise<{ readonly hash: Hash }> {
-  const hash = await params.walletClient.writeContract({
-    address: params.pool,
-    abi: resourcePoolAbi,
-    functionName: "commit",
-    args: [params.amount],
-    account: params.account,
-    chain: params.walletClient.chain,
-  });
+  const hash =
+    params.roundId === undefined
+      ? await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "commit",
+          args: [params.amount],
+          account: params.account,
+          chain: params.walletClient.chain,
+        })
+      : await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "commit",
+          args: [params.roundId, params.amount],
+          account: params.account,
+          chain: params.walletClient.chain,
+        });
   return { hash };
 }
 
 export type DropOutParams = PoolWriteParams & {
   readonly agentId: AgentId;
+  /** Round to drop out of — omit to use the contract shim (currentRoundId). */
+  readonly roundId?: bigint;
 };
 
 /**
@@ -42,16 +56,31 @@ export type DropOutParams = PoolWriteParams & {
 export async function dropOut(
   params: DropOutParams,
 ): Promise<{ readonly hash: Hash }> {
-  const hash = await params.walletClient.writeContract({
-    address: params.pool,
-    abi: resourcePoolAbi,
-    functionName: "dropOut",
-    args: [params.agentId],
-    account: params.account,
-    chain: params.walletClient.chain,
-  });
+  const hash =
+    params.roundId === undefined
+      ? await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "dropOut",
+          args: [params.agentId],
+          account: params.account,
+          chain: params.walletClient.chain,
+        })
+      : await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "dropOut",
+          args: [params.roundId, params.agentId],
+          account: params.account,
+          chain: params.walletClient.chain,
+        });
   return { hash };
 }
+
+export type RoundScopedWriteParams = PoolWriteParams & {
+  /** Round to act on — omit to use the contract shim (currentRoundId). */
+  readonly roundId?: bigint;
+};
 
 /**
  * Close an expired, unfilled pool. This only snapshots refund accounting —
@@ -59,15 +88,25 @@ export async function dropOut(
  * (own stake plus pro-rata forfeiture) with claimRefund.
  */
 export async function finalizeExpired(
-  params: PoolWriteParams,
+  params: RoundScopedWriteParams,
 ): Promise<{ readonly hash: Hash }> {
-  const hash = await params.walletClient.writeContract({
-    address: params.pool,
-    abi: resourcePoolAbi,
-    functionName: "finalizeExpired",
-    account: params.account,
-    chain: params.walletClient.chain,
-  });
+  const hash =
+    params.roundId === undefined
+      ? await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "finalizeExpired",
+          account: params.account,
+          chain: params.walletClient.chain,
+        })
+      : await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "finalizeExpired",
+          args: [params.roundId],
+          account: params.account,
+          chain: params.walletClient.chain,
+        });
   return { hash };
 }
 
@@ -77,35 +116,57 @@ export async function finalizeExpired(
  * never claims cannot grief anyone else's refund.
  */
 export async function claimRefund(
-  params: PoolWriteParams,
+  params: RoundScopedWriteParams,
 ): Promise<{ readonly hash: Hash }> {
-  const hash = await params.walletClient.writeContract({
-    address: params.pool,
-    abi: resourcePoolAbi,
-    functionName: "claimRefund",
-    account: params.account,
-    chain: params.walletClient.chain,
-  });
+  const hash =
+    params.roundId === undefined
+      ? await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "claimRefund",
+          account: params.account,
+          chain: params.walletClient.chain,
+        })
+      : await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "claimRefund",
+          args: [params.roundId],
+          account: params.account,
+          chain: params.walletClient.chain,
+        });
   return { hash };
 }
 
 /** Settle a filled pool atomically to the provider. O(1) — no feedback written here. */
 export async function settlePool(
-  params: PoolWriteParams,
+  params: RoundScopedWriteParams,
 ): Promise<{ readonly hash: Hash }> {
-  const hash = await params.walletClient.writeContract({
-    address: params.pool,
-    abi: resourcePoolAbi,
-    functionName: "settle",
-    account: params.account,
-    chain: params.walletClient.chain,
-  });
+  const hash =
+    params.roundId === undefined
+      ? await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "settle",
+          account: params.account,
+          chain: params.walletClient.chain,
+        })
+      : await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "settle",
+          args: [params.roundId],
+          account: params.account,
+          chain: params.walletClient.chain,
+        });
   return { hash };
 }
 
 export type RecordCompletionsParams = PoolWriteParams & {
   /** Max participants to process from the cursor this call — repeat until drained. */
   readonly maxRecords: bigint;
+  /** Round to record for — omit to use the contract shim (currentRoundId). */
+  readonly roundId?: bigint;
 };
 
 /**
@@ -116,11 +177,45 @@ export type RecordCompletionsParams = PoolWriteParams & {
 export async function recordCompletions(
   params: RecordCompletionsParams,
 ): Promise<{ readonly hash: Hash }> {
+  const hash =
+    params.roundId === undefined
+      ? await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "recordCompletions",
+          args: [params.maxRecords],
+          account: params.account,
+          chain: params.walletClient.chain,
+        })
+      : await params.walletClient.writeContract({
+          address: params.pool,
+          abi: resourcePoolAbi,
+          functionName: "recordCompletions",
+          args: [params.roundId, params.maxRecords],
+          account: params.account,
+          chain: params.walletClient.chain,
+        });
+  return { hash };
+}
+
+export type StartRoundParams = PoolWriteParams & {
+  /** Funding target in atomic units — convert with toAtomicUsdc first. */
+  readonly target: bigint;
+  /** Round length in seconds (uint64 on-chain). */
+  readonly durationSec: bigint;
+  /** Committer cap for the round. */
+  readonly maxParticipants: bigint;
+};
+
+/** Open a new funding round. Reverts unless the previous round is terminal. */
+export async function startRound(
+  params: StartRoundParams,
+): Promise<{ readonly hash: Hash }> {
   const hash = await params.walletClient.writeContract({
     address: params.pool,
     abi: resourcePoolAbi,
-    functionName: "recordCompletions",
-    args: [params.maxRecords],
+    functionName: "startRound",
+    args: [params.target, params.durationSec, params.maxParticipants],
     account: params.account,
     chain: params.walletClient.chain,
   });
@@ -165,6 +260,56 @@ export async function getPoolState(
       }),
     ]);
   return { target, totalCommitted, settled, expired, participantCount };
+}
+
+export type GetRoundStateParams = GetPoolStateParams & {
+  readonly roundId: bigint;
+};
+
+/** Read one round's funding progress, terminal flags, and deadline. */
+export async function getRoundState(
+  params: GetRoundStateParams,
+): Promise<RoundState> {
+  const [round, expired, participantCount] = await Promise.all([
+    params.publicClient.readContract({
+      address: params.pool,
+      abi: resourcePoolAbi,
+      functionName: "rounds",
+      args: [params.roundId],
+    }),
+    params.publicClient.readContract({
+      address: params.pool,
+      abi: resourcePoolAbi,
+      functionName: "expired",
+      args: [params.roundId],
+    }),
+    params.publicClient.readContract({
+      address: params.pool,
+      abi: resourcePoolAbi,
+      functionName: "participantCount",
+      args: [params.roundId],
+    }),
+  ]);
+  return {
+    target: round[0],
+    totalCommitted: round[3],
+    settled: round[5],
+    expired,
+    participantCount,
+    roundId: params.roundId,
+    deadline: round[1],
+  };
+}
+
+/** Read the pool's latest round id. */
+export async function getCurrentRoundId(
+  params: GetPoolStateParams,
+): Promise<bigint> {
+  return params.publicClient.readContract({
+    address: params.pool,
+    abi: resourcePoolAbi,
+    functionName: "currentRoundId",
+  });
 }
 
 /**

@@ -63,6 +63,21 @@ if (!wouldExceedTarget(state, toAtomicUsdc("2"))) {
 > `contracts/out/ResourcePool.sol/ResourcePool.json` — regenerate (never
 > hand-edit) via `(cd contracts && forge build) && node sdk/scripts/sync-pool-abi.mjs`.
 
+## Pool rounds — round-scoped funding (v2)
+
+```ts
+import { commitToPool, getRoundState, startRound } from "@jx-nexus/coalition";
+
+const pool = "0x..."; // always explicit — no default (see src/pool/addresses.ts)
+await startRound({ walletClient, account, pool, target: toAtomicUsdc("10"), durationSec: 3600n, maxParticipants: 10n });
+await commitToPool({ walletClient, account, pool, amount: toAtomicUsdc("2"), roundId: 2n });
+const round = await getRoundState({ publicClient, pool, roundId: 2n }); // { target, totalCommitted, settled, expired, participantCount, roundId, deadline }
+```
+
+Omit `roundId` on `commitToPool`, `dropOut`, `settlePool`,
+`finalizeExpired`, `claimRefund`, or `recordCompletions` to use the
+contract shim (current round on-chain).
+
 ## ENS — ENSv2 subnames on Sepolia (beta)
 
 ```ts

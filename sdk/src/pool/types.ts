@@ -6,3 +6,9 @@ export type PoolState = {
   readonly expired: boolean;
   readonly participantCount: bigint;
 };
+
+/** Live state of one funding round. All amounts are bigint atomic units. */
+export type RoundState = PoolState & {
+  readonly roundId: bigint;
+  readonly deadline: bigint;
+};

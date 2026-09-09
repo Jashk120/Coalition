@@ -49,14 +49,37 @@ export const resourcePoolAbi = [
         "name": "maxParticipants_",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "maxParticipantsCap_",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
+    "name": "MAX_ROUND_DURATION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "agentIdOf",
     "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "",
         "type": "address",
@@ -87,8 +110,57 @@ export const resourcePoolAbi = [
   },
   {
     "type": "function",
+    "name": "bindAgentId",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimRefund",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "claimRefund",
     "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "commit",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -111,10 +183,28 @@ export const resourcePoolAbi = [
     "inputs": [
       {
         "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
     ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "currentRoundId",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
@@ -142,6 +232,24 @@ export const resourcePoolAbi = [
     "name": "dropOut",
     "inputs": [
       {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "dropOut",
+    "inputs": [
+      {
         "name": "agentId",
         "type": "uint256",
         "internalType": "uint256"
@@ -154,6 +262,11 @@ export const resourcePoolAbi = [
     "type": "function",
     "name": "droppedOut",
     "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "",
         "type": "address",
@@ -173,6 +286,44 @@ export const resourcePoolAbi = [
     "type": "function",
     "name": "expired",
     "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "expired",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "expiredFinalized",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -204,6 +355,19 @@ export const resourcePoolAbi = [
   },
   {
     "type": "function",
+    "name": "finalizeExpired",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "forfeitedTotal",
     "inputs": [],
     "outputs": [
@@ -230,8 +394,32 @@ export const resourcePoolAbi = [
   },
   {
     "type": "function",
+    "name": "getParticipants",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "hasAgentId",
     "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "",
         "type": "address",
@@ -253,6 +441,11 @@ export const resourcePoolAbi = [
     "inputs": [
       {
         "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -270,6 +463,38 @@ export const resourcePoolAbi = [
     "type": "function",
     "name": "maxParticipants",
     "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "maxParticipantsCap",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "participantCount",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -304,6 +529,24 @@ export const resourcePoolAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "recordCompletions",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxRecords",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -398,8 +641,100 @@ export const resourcePoolAbi = [
   },
   {
     "type": "function",
+    "name": "rounds",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "target",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxParticipants",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalCommitted",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "forfeitedTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "settled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "expiredFinalized",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "refundBalance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundActiveTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundClaimed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundRemaining",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "feedbackCursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "droppedCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "settle",
     "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settle",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -415,6 +750,29 @@ export const resourcePoolAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "startRound",
+    "inputs": [
+      {
+        "name": "target_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "duration_",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxParticipants_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -464,6 +822,31 @@ export const resourcePoolAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Committed",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       },
       {
         "name": "amount",
@@ -552,8 +935,58 @@ export const resourcePoolAbi = [
   },
   {
     "type": "event",
+    "name": "RoundStarted",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "target",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxParticipants",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Settled",
     "inputs": [
+      {
+        "name": "total",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Settled",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
       {
         "name": "total",
         "type": "uint256",
@@ -591,6 +1024,11 @@ export const resourcePoolAbi = [
   },
   {
     "type": "error",
+    "name": "AlreadySettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BadDeadline",
     "inputs": [
       {
@@ -607,8 +1045,35 @@ export const resourcePoolAbi = [
   },
   {
     "type": "error",
+    "name": "BadDuration",
+    "inputs": [
+      {
+        "name": "duration",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BadMaxParticipants",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CapExceeded",
+    "inputs": [
+      {
+        "name": "maxParticipants",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -645,6 +1110,11 @@ export const resourcePoolAbi = [
   {
     "type": "error",
     "name": "NotParticipant",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotProvider",
     "inputs": []
   },
   {
@@ -695,6 +1165,16 @@ export const resourcePoolAbi = [
   },
   {
     "type": "error",
+    "name": "RoundNotTerminal",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RoundOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TooManyParticipants",
     "inputs": [
       {
@@ -707,6 +1187,11 @@ export const resourcePoolAbi = [
   {
     "type": "error",
     "name": "TransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WrongRound",
     "inputs": []
   },
   {
