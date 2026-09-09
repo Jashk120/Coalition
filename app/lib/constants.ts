@@ -26,8 +26,8 @@ export const IDENTITY_REGISTRY_FROM_BLOCK: bigint = (() => {
   return 29241340n;
 })();
 
-/** Funding target: 80.00 USDC in 6-decimal atomic units. */
-export const TARGET_ATOMIC = 80000000n;
+/** Funding target: 10.00 USDC in 6-decimal atomic units. */
+export const TARGET_ATOMIC = 10000000n;
 
 /** First Arc block carrying pool code — activity log scans start here. */
 export const POOL_DEPLOY_BLOCK: bigint = (() => {
@@ -42,10 +42,10 @@ export const EXPLORER_URL =
 /** Max settled rounds shown in the dashboard history table. */
 export const ROUND_HISTORY_LIMIT = 10;
 
-/** Standard per-agent share (cap): 20.00 USDC in atomic units.
+/** Standard per-agent share (cap): 2.50 USDC in atomic units.
  * Fund/run routes commit at most this per wallet, splitting the live
  * remainder across the wallets still to run when less is left. */
-export const SHARE_ATOMIC = 20000000n;
+export const SHARE_ATOMIC = 2500000n;
 
 export const ORCHESTRATOR_URL =
   process.env["NEXT_PUBLIC_ORCHESTRATOR_URL"] ?? "http://localhost:8080";
@@ -69,7 +69,7 @@ export const SEED_META: readonly SeedMeta[] = [
     wallet: "0x0427194a9c99599a8bbbcc292b1523be91e4101d",
     cpu: 0.2,
     memMB: 800,
-    shareUsdc: "20.00",
+    shareUsdc: "2.50",
   },
   {
     id: "agent-2",
@@ -78,7 +78,7 @@ export const SEED_META: readonly SeedMeta[] = [
     wallet: "0xd1a3c06eb92dfd48fa1bf10ba2071da25e39cd47",
     cpu: 0.15,
     memMB: 600,
-    shareUsdc: "20.00",
+    shareUsdc: "2.50",
   },
   {
     id: "agent-3",
@@ -87,7 +87,7 @@ export const SEED_META: readonly SeedMeta[] = [
     wallet: "0x072825b4ba2c8019ccceba10e59b29a40980be94",
     cpu: 0.1,
     memMB: 400,
-    shareUsdc: "20.00",
+    shareUsdc: "2.50",
   },
   {
     id: "agent-4",
@@ -96,7 +96,7 @@ export const SEED_META: readonly SeedMeta[] = [
     wallet: "0x67bc424b83be66f7f5c4fc2324d4154744f1b310",
     cpu: 0.25,
     memMB: 1000,
-    shareUsdc: "20.00",
+    shareUsdc: "2.50",
   },
 ];
 

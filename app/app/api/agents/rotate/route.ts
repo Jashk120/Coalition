@@ -11,7 +11,7 @@ import type { RotateResponse } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const DEFAULT_TARGET = "80000000";
+const DEFAULT_TARGET = "10000000";
 const DEFAULT_DURATION_SEC = "3600";
 const DEFAULT_MAX_PARTICIPANTS = "4";
 const MAX_DURATION_SEC = 7200n;
