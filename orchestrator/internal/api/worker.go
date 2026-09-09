@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jashk120/Coalition/orchestrator/internal/domain"
@@ -36,22 +38,31 @@ func (s *Server) StartWorker(ctx context.Context) {
 	}()
 }
 
-// workOnce burns once per live container and returns how many ran. Factored
-// out so tests drive it directly instead of sleeping for a tick.
+// workOnce burns once per live container and returns how many ran. Burns
+// run in parallel so every agent's bar climbs in the same tick; the
+// reserve-pattern metering keeps concurrent execs from jointly overspending
+// undetected. Factored out so tests drive it directly instead of sleeping
+// for a tick.
 func (s *Server) workOnce(ctx context.Context) int {
 	if !s.ledger.FundingClosed() {
 		return 0
 	}
-	ran := 0
+	var ran atomic.Int64
+	var wg sync.WaitGroup
 	for _, b := range s.ledger.ListContainers() {
 		if b.ContainerID == "" {
 			continue
 		}
-		if s.workWallet(ctx, b.Wallet, b.ContainerID) {
-			ran++
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if s.workWallet(ctx, b.Wallet, b.ContainerID) {
+				ran.Add(1)
+			}
+		}()
 	}
-	return ran
+	wg.Wait()
+	return int(ran.Load())
 }
 
 // workWallet runs one metered burn for a wallet: budget-checked reserve,
