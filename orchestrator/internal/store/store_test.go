@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"testing"
 	"time"
 
@@ -516,5 +517,149 @@ func Test_Token_expiry_epoch_settlement(t *testing.T) {
 	}
 	if s.SettledAt().IsZero() {
 		t.Fatal("SettledAt must be recorded")
+	}
+}
+
+func Test_Round_settle_is_per_round(t *testing.T) {
+	s := NewStore(72)
+	one := big.NewInt(1)
+	two := big.NewInt(2)
+	if s.IsRoundSettled(one) {
+		t.Fatal("round 1 starts unsettled")
+	}
+	if !s.MarkRoundSettled(one) {
+		t.Fatal("first MarkRoundSettled(1) must win")
+	}
+	if s.MarkRoundSettled(one) {
+		t.Fatal("second MarkRoundSettled(1) must lose")
+	}
+	if !s.IsRoundSettled(one) {
+		t.Fatal("round 1 must read settled")
+	}
+	if s.IsRoundSettled(two) {
+		t.Fatal("settling round 1 must not settle round 2")
+	}
+	if s.IsRoundSettled(nil) {
+		t.Fatal("nil round reads unsettled")
+	}
+	if s.MarkRoundSettled(nil) {
+		t.Fatal("nil round never flips")
+	}
+	if s.RoundSettledAt(two).IsZero() == false {
+		t.Fatal("unsettled round has no settle instant")
+	}
+	if s.RoundSettledAt(one).IsZero() {
+		t.Fatal("settled round must record its instant")
+	}
+	if s.IsSettled() {
+		t.Fatal("round settle must not flip the legacy v1 flag")
+	}
+}
+
+func Test_Round_allowlist_prior_rounds_confer_no_access(t *testing.T) {
+	s := NewStore(72)
+	a := mustWallet(t, testWalletA)
+	b := mustWallet(t, testWalletB)
+	s.SetCurrentRound(big.NewInt(1))
+	tokA, err := s.IssueToken(a)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := s.Authenticate(a, tokA); err != nil {
+		t.Fatalf("same-round auth: %v", err)
+	}
+	s.SetCurrentRound(big.NewInt(2))
+	if err := s.Authenticate(a, tokA); !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("prior-round wallet must be 403 after advance, got %v", err)
+	}
+	tokB, err := s.IssueToken(b)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := s.Authenticate(b, tokB); err != nil {
+		t.Fatalf("current-round auth: %v", err)
+	}
+	if err := s.Authenticate(a, tokB); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("cross-wallet token must be 401, got %v", err)
+	}
+}
+
+func Test_Round_reserve_stamps_and_rollback_restores(t *testing.T) {
+	s := NewStore(72)
+	s.SetCurrentRound(big.NewInt(3))
+	w := mustWallet(t, testWalletA)
+	cap := AdmitCap{TotalCPUMicro: MicroCU(1), TotalMemMB: 4096, MaxAgents: 5}
+	if _, err := s.Reserve(w, MicroCU(0.2), 800, cap); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	got, err := s.WalletRound(w)
+	if err != nil || got == nil || got.Cmp(big.NewInt(3)) != 0 {
+		t.Fatalf("WalletRound = %v, %v; want 3", got, err)
+	}
+	if err := s.ConfirmReserve(w, "c1"); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	s.SetCurrentRound(big.NewInt(4))
+	if _, err := s.Reserve(w, MicroCU(0.5), 1000, cap); err != nil {
+		t.Fatalf("re-reserve: %v", err)
+	}
+	s.RollbackReserve(w)
+	got, err = s.WalletRound(w)
+	if err != nil || got == nil || got.Cmp(big.NewInt(3)) != 0 {
+		t.Fatalf("rollback must restore round 3, got %v, %v", got, err)
+	}
+}
+
+func Test_Round_expiry_anchors_to_round_settle(t *testing.T) {
+	s := NewStore(1)
+	cur := time.Now()
+	s.SetNowFunc(func() time.Time { return cur })
+	s.SetCurrentRound(big.NewInt(7))
+	w := mustWallet(t, testWalletA)
+	tok, err := s.IssueToken(w)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	cur = cur.Add(2 * time.Hour)
+	if err := s.Authenticate(w, tok); !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("past alloc+window should expire, got %v", err)
+	}
+	s.MarkRoundSettled(big.NewInt(7))
+	cur = cur.Add(30 * time.Minute)
+	if err := s.Authenticate(w, tok); err != nil {
+		t.Fatalf("round settle re-anchors expiry to round settledAt+window: %v", err)
+	}
+	s.MarkRoundSettled(big.NewInt(8))
+	cur = cur.Add(31 * time.Minute)
+	if err := s.Authenticate(w, tok); !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("past round settledAt+window should expire, got %v", err)
+	}
+}
+
+func Test_FundingClosed_tracks_current_round(t *testing.T) {
+	s := NewStore(72)
+	if s.FundingClosed() {
+		t.Fatal("fresh ledger funds open")
+	}
+	s.MarkSettled()
+	if !s.FundingClosed() {
+		t.Fatal("legacy settle closes funding")
+	}
+	s2 := NewStore(72)
+	s2.SetCurrentRound(big.NewInt(1))
+	if s2.FundingClosed() {
+		t.Fatal("unsettled current round funds open")
+	}
+	s2.MarkRoundSettled(big.NewInt(2))
+	if s2.FundingClosed() {
+		t.Fatal("settling a foreign round must not close the current round")
+	}
+	s2.MarkRoundSettled(big.NewInt(1))
+	if !s2.FundingClosed() {
+		t.Fatal("settling the current round closes funding")
+	}
+	s2.SetCurrentRound(big.NewInt(3))
+	if s2.FundingClosed() {
+		t.Fatal("advancing to an open round reopens funding")
 	}
 }

@@ -36,7 +36,8 @@ func run(logger *slog.Logger) error {
 		slog.String("resource", cfg.ResourceName),
 		slog.String("port", cfg.Port),
 		slog.String("provider", cfg.ProviderAddress.String()),
-		slog.Bool("settleEnabled", cfg.PoolAddress != ""))
+		slog.Bool("settleEnabled", cfg.PoolAddress != ""),
+		slog.Bool("roundsEnabled", cfg.PoolV2Address != ""))
 
 	ledger := store.NewStore(cfg.WindowHours)
 	if cfg.AllowNoAppAuth {
@@ -58,10 +59,11 @@ func run(logger *slog.Logger) error {
 	done := make(chan error, 2)
 	procs := 1
 	go func() { done <- srv.Run(ctx) }()
-	if cfg.PoolAddress != "" {
+	if cfg.PoolAddress != "" || cfg.PoolV2Address != "" {
 		lis := settle.NewListener(cfg.RPCURL, cfg.PoolAddress, cfg.PollInterval, ledger, logger,
 			settle.WithCommitmentTarget(cfg.TargetAtomic),
 			settle.WithConfirmations(uint64(cfg.Confirmations)),
+			settle.WithV2Pool(cfg.PoolV2Address),
 		)
 		procs = 2
 		go func() { done <- lis.Run(ctx) }()

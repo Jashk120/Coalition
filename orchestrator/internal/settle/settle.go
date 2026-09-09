@@ -11,6 +11,7 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,10 +43,51 @@ const settledSelectorView = "0x8f775839"
 // pool's funding-window expiry view.
 const expiredSelectorView = "0x4c2067c7"
 
+// roundStartedSelector is keccak256("RoundStarted(uint256,uint256,uint64,uint256)"),
+// the v2 pool's round-open event. Round ids ride topics[1] (indexed); target,
+// deadline, and maxParticipants ride the data words in order.
+// Derived with `cast keccak "RoundStarted(uint256,uint256,uint64,uint256)"`.
+const roundStartedSelector = "0x034cf9cb7bf3a1bcfb361d696f0639e27528bfd9493427d973b377b04e638360"
+
+// settledV2Selector is keccak256("Settled(uint256,uint256)"), the v2 pool's
+// round-scoped terminal event. The round id rides topics[1] (indexed); the
+// payout total rides data. The legacy Settled(uint256) fires alongside it in
+// the same transaction, so a v1 listener still sees funds leave.
+// Derived with `cast keccak "Settled(uint256,uint256)"`.
+const settledV2Selector = "0xf5b268a3ff315cc44ccceeef86259c9e8eef81ceecb14001543809115380dd62"
+
+// currentRoundIdSelector is the first 4 bytes of keccak256("currentRoundId()").
+// Derived with `cast sig "currentRoundId()"`.
+const currentRoundIdSelector = "0x9cbe5efd"
+
+// roundsSelector is the first 4 bytes of keccak256("rounds(uint256)"), the
+// auto-generated getter for the v2 pool's per-round accounting tuple.
+// Derived with `cast sig "rounds(uint256)"`.
+const roundsSelector = "0x8c65c81f"
+
+// expiredAtSelector is the first 4 bytes of keccak256("expired(uint256)"),
+// the v2 pool's per-round expiry view.
+// Derived with `cast sig "expired(uint256)"`.
+const expiredAtSelector = "0xba065e1f"
+
+// participantCountAtSelector is the first 4 bytes of
+// keccak256("participantCount(uint256)"), the v2 pool's per-round active
+// participant count view.
+// Derived with `cast sig "participantCount(uint256)"`.
+const participantCountAtSelector = "0x0d1df8d0"
+
 // Listener polls eth_getLogs for POOL_ADDRESS on a time.Ticker. The filter pins
 // topics[0] to the Settled selector, so only the terminal event matches.
 // Before flipping the ledger it verifies on-chain funding via eth_call
 // totalCommitted() >= the configured target: a Settled log alone never flips.
+//
+// With WithV2Pool the same poller additionally tracks the v2 round-scoped
+// pool: RoundStarted logs (and the currentRoundId view) advance the tracked
+// round, Settled(roundId,total) logs flip only their own round's ledger entry
+// after a per-round chain gate (rounds(roundId).totalCommitted >=
+// rounds(roundId).target), and every poll re-evaluates that gate from chain
+// state so a top-up with no new event still flips. The v1 flow is untouched:
+// the legacy Settled(uint256) still drives the global ledger flag.
 type Listener struct {
 	rpcURL   string
 	pool     string
@@ -56,6 +98,11 @@ type Listener struct {
 
 	targetAtomic  *big.Int
 	confirmations uint64
+
+	v2pool       string
+	views        *Client
+	trackedRound *big.Int
+	roundCursors map[string]string
 
 	mu        sync.Mutex
 	lastBlock string
@@ -81,6 +128,13 @@ func WithConfirmations(n uint64) ListenerOption {
 	}
 }
 
+// WithV2Pool enables round-scoped tracking for the v2 pool address. Empty
+// keeps the legacy v1-only behavior. The listener stays read-only: no keys,
+// no signing.
+func WithV2Pool(pool string) ListenerOption {
+	return func(l *Listener) { l.v2pool = pool }
+}
+
 // NewListener builds a poller. Disable by not constructing (empty POOL_ADDRESS).
 // The cursor boots at "latest": on restart only new blocks are scanned, never
 // a genesis rescan.
@@ -92,6 +146,8 @@ func NewListener(rpcURL, pool string, interval time.Duration, ledger *store.Stor
 		ledger:        ledger,
 		logger:        logger,
 		client:        &http.Client{Timeout: 15 * time.Second},
+		views:         NewClient(rpcURL),
+		roundCursors:  make(map[string]string),
 		lastBlock:     "latest",
 		confirmations: 1,
 	}
@@ -128,20 +184,42 @@ func (l *Listener) Run(ctx context.Context) error {
 	}
 }
 
-// Check performs one poll round: it fetches the latest block, queries logs
-// from the last checked block, and flips the ledger on the first
-// sufficiently-confirmed match whose on-chain commitment covers the target.
+// Check performs one poll round across the v1 pool and, when configured,
+// the v2 round-scoped pool. It reports whether this call transitioned either
+// ledger. An empty v1 pool address skips the legacy flow (v2-only mode);
+// polling continues harmlessly after settle on both.
+func (l *Listener) Check(ctx context.Context) (bool, error) {
+	latest, err := l.blockNumber(ctx)
+	if err != nil {
+		return false, err
+	}
+	flipped := false
+	if l.pool != "" {
+		flipped, err = l.checkLegacy(ctx, latest)
+		if err != nil {
+			return flipped, err
+		}
+	}
+	if l.v2pool == "" {
+		return flipped, nil
+	}
+	vflipped, err := l.checkV2(ctx, latest)
+	if err != nil {
+		return flipped, err
+	}
+	return flipped || vflipped, nil
+}
+
+// checkLegacy is the v1 poll round: it queries logs from the last checked
+// block, and flips the ledger on the first sufficiently-confirmed match
+// whose on-chain commitment covers the target.
 // The cursor never advances past unprocessed logs: on the first
 // unmatching or unverifiable log the cursor pins to that log's block so the
 // round is retried, and only a fully processed round advances to latest.
 // Independently of logs, every poll re-evaluates the funding gate from chain
 // state (totalCommitted eth_call), so a top-up that lands after the cursor
 // with no new event still flips. It reports whether this call transitioned.
-func (l *Listener) Check(ctx context.Context) (bool, error) {
-	latest, err := l.blockNumber(ctx)
-	if err != nil {
-		return false, err
-	}
+func (l *Listener) checkLegacy(ctx context.Context, latest string) (bool, error) {
 	if flipped, err := l.checkChainGate(ctx, latest); err != nil || flipped {
 		return flipped, err
 	}
@@ -196,6 +274,203 @@ func (l *Listener) checkChainGate(ctx context.Context, latest string) (bool, err
 	}
 	l.setLastBlock(latest)
 	return l.ledger.MarkSettled(), nil
+}
+
+// checkV2 performs one poll round for the round-scoped pool: reconcile the
+// tracked round against currentRoundId, re-evaluate the per-round funding
+// gate from chain state, then scan RoundStarted/Settled(roundId,total) logs.
+// A RoundStarted for a newer round advances tracking and restarts that
+// round's cursor at the event block; a Settled log for the tracked round
+// flips only that round's ledger entry after its own chain gate passes. The
+// cursor never advances past an unverifiable log: it pins to that log's
+// block per round so the round is retried. It reports whether this call
+// transitioned.
+func (l *Listener) checkV2(ctx context.Context, latest string) (bool, error) {
+	tracked := l.trackedV2Round()
+	onchain, err := l.views.CurrentRoundId(ctx, l.v2pool, latest)
+	if err != nil {
+		return false, err
+	}
+	if onchain == nil || onchain.Sign() < 1 {
+		return false, fmt.Errorf("v2 pool %s currentRoundId = %v", l.v2pool, onchain)
+	}
+	if tracked == nil || onchain.Cmp(tracked) > 0 {
+		l.advanceRound(onchain, latest)
+		tracked = onchain
+	}
+	if funded, err := l.roundFunded(ctx, latest, tracked); err != nil || funded {
+		if err != nil {
+			return false, err
+		}
+		l.setRoundCursor(tracked, latest)
+		return l.ledger.MarkRoundSettled(tracked), nil
+	}
+	if l.ledger.IsRoundSettled(tracked) {
+		l.setRoundCursor(tracked, latest)
+		return false, nil
+	}
+	logs, err := l.getV2Logs(ctx, tracked, latest)
+	if err != nil {
+		return false, err
+	}
+	confirmed, err := l.confirmedLogs(ctx, logs, latest)
+	if err != nil {
+		return false, err
+	}
+	if len(confirmed) == 0 {
+		l.setRoundCursor(tracked, latest)
+		return false, nil
+	}
+	for _, lg := range confirmed {
+		roundId, kind, err := parseV2Log(lg)
+		if err != nil {
+			continue
+		}
+		switch kind {
+		case v2LogRoundStarted:
+			if roundId.Cmp(tracked) > 0 {
+				l.advanceRound(roundId, logBlock(lg, latest))
+				tracked = roundId
+			}
+		case v2LogSettled:
+			if roundId.Cmp(tracked) != 0 {
+				continue
+			}
+			funded, err := l.roundFunded(ctx, latest, tracked)
+			if err != nil {
+				l.pinRoundCursor(tracked, lg)
+				return false, err
+			}
+			if !funded {
+				views, _ := l.views.ReadRoundViews(ctx, l.v2pool, tracked)
+				committed, target := "?", "?"
+				if views != nil {
+					committed, target = views.TotalCommitted.String(), views.Target.String()
+				}
+				l.logger.Warn("settled-log-below-target",
+					slog.String("pool", l.v2pool),
+					slog.String("round", tracked.String()),
+					slog.String("committed", committed),
+					slog.String("target", target))
+				l.pinRoundCursor(tracked, lg)
+				return false, nil
+			}
+			l.setRoundCursor(tracked, latest)
+			return l.ledger.MarkRoundSettled(tracked), nil
+		}
+	}
+	l.setRoundCursor(tracked, latest)
+	return false, nil
+}
+
+// roundFunded re-evaluates one round's funding gate from chain state: the
+// rounds(roundId) tuple covers its own target, so a top-up with no new event
+// still settles. A zero target never counts as funded.
+func (l *Listener) roundFunded(ctx context.Context, latest string, roundId *big.Int) (bool, error) {
+	views, err := l.views.ReadRoundViews(ctx, l.v2pool, roundId)
+	if err != nil {
+		return false, err
+	}
+	if views.Target.Sign() <= 0 {
+		return false, nil
+	}
+	return views.TotalCommitted.Cmp(views.Target) >= 0, nil
+}
+
+// v2 log kinds by topics[0].
+type v2LogKind int
+
+const (
+	v2LogUnknown v2LogKind = iota
+	v2LogRoundStarted
+	v2LogSettled
+)
+
+// parseV2Log decodes a RoundStarted or Settled(roundId,total) log: the kind
+// from topics[0], the round id from topics[1] (indexed in both events).
+// Anything else is v2LogUnknown with the decode error.
+func parseV2Log(lg json.RawMessage) (*big.Int, v2LogKind, error) {
+	var entry struct {
+		Topics []string `json:"topics"`
+	}
+	if err := json.Unmarshal(lg, &entry); err != nil {
+		return nil, v2LogUnknown, fmt.Errorf("decode v2 log: %w", err)
+	}
+	if len(entry.Topics) < 2 {
+		return nil, v2LogUnknown, fmt.Errorf("v2 log has %d topics, want >= 2", len(entry.Topics))
+	}
+	var kind v2LogKind
+	switch strings.ToLower(entry.Topics[0]) {
+	case roundStartedSelector:
+		kind = v2LogRoundStarted
+	case settledV2Selector:
+		kind = v2LogSettled
+	default:
+		return nil, v2LogUnknown, fmt.Errorf("v2 log topic %q is neither RoundStarted nor Settled", entry.Topics[0])
+	}
+	roundId, err := parseHexUint(entry.Topics[1])
+	if err != nil {
+		return nil, v2LogUnknown, fmt.Errorf("decode v2 log round: %w", err)
+	}
+	return roundId, kind, nil
+}
+
+// logBlock returns the log's block number, falling back to latest when the
+// log carries none.
+func logBlock(lg json.RawMessage, latest string) string {
+	var entry struct {
+		BlockNumber string `json:"blockNumber"`
+	}
+	if err := json.Unmarshal(lg, &entry); err != nil || entry.BlockNumber == "" {
+		return latest
+	}
+	return entry.BlockNumber
+}
+
+// advanceRound moves tracking to a newer round: the ledger's current round
+// follows (which scopes the entitlement allowlist), and the new round's
+// cursor restarts at fromBlock so its history is scanned from its start,
+// never from genesis and never from the prior round's position.
+func (l *Listener) advanceRound(roundId *big.Int, fromBlock string) {
+	l.mu.Lock()
+	l.trackedRound = new(big.Int).Set(roundId)
+	l.roundCursors[roundId.String()] = fromBlock
+	l.mu.Unlock()
+	l.ledger.SetCurrentRound(roundId)
+}
+
+// trackedV2Round returns a copy of the tracked round, or nil before the
+// first v2 poll reconciles against currentRoundId.
+func (l *Listener) trackedV2Round() *big.Int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.trackedRound == nil {
+		return nil
+	}
+	return new(big.Int).Set(l.trackedRound)
+}
+
+// setRoundCursor advances one round's scan cursor.
+func (l *Listener) setRoundCursor(roundId *big.Int, block string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.roundCursors[roundId.String()] = block
+}
+
+// pinRoundCursor holds one round's cursor at an unprocessed log's block so
+// the next poll retries it instead of skipping ahead.
+func (l *Listener) pinRoundCursor(roundId *big.Int, lg json.RawMessage) {
+	l.setRoundCursor(roundId, logBlock(lg, l.roundCursorOf(roundId)))
+}
+
+// roundCursorOf reads one round's cursor under lock ("latest" before first use).
+func (l *Listener) roundCursorOf(roundId *big.Int) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if cur, ok := l.roundCursors[roundId.String()]; ok && cur != "" {
+		return cur
+	}
+	return "latest"
 }
 
 // pinCursor holds the cursor at an unprocessed log's block so the next poll
@@ -434,6 +709,19 @@ type PoolViews struct {
 	TotalCommitted *big.Int
 }
 
+// RoundViews is one v2 funding round's on-chain state. It mirrors the SDK
+// RoundState shape field-for-field: target, totalCommitted, settled,
+// expired, participantCount, roundId, deadline.
+type RoundViews struct {
+	Target           *big.Int
+	TotalCommitted   *big.Int
+	Settled          bool
+	Expired          bool
+	ParticipantCount *big.Int
+	RoundId          *big.Int
+	Deadline         *big.Int
+}
+
 // ReadPoolViews reads settled(), expired(), and totalCommitted() at latest.
 // A nonzero uint256 counts as true for the boolean views.
 func (c *Client) ReadPoolViews(ctx context.Context, pool string) (*PoolViews, error) {
@@ -450,6 +738,131 @@ func (c *Client) ReadPoolViews(ctx context.Context, pool string) (*PoolViews, er
 		return nil, fmt.Errorf("totalCommitted view: %w", err)
 	}
 	return &PoolViews{Settled: settled.Sign() != 0, Expired: expired.Sign() != 0, TotalCommitted: committed}, nil
+}
+
+// CurrentRoundId reads the v2 pool's currentRoundId() at block tag.
+func (c *Client) CurrentRoundId(ctx context.Context, pool, blockTag string) (*big.Int, error) {
+	v, err := c.EthCall(ctx, pool, currentRoundIdSelector, blockTag)
+	if err != nil {
+		return nil, fmt.Errorf("currentRoundId view: %w", err)
+	}
+	return v, nil
+}
+
+// ReadRoundViews reads one v2 round's funding progress, terminal flags, and
+// deadline: the rounds(roundId) accounting tuple plus the expired(roundId)
+// and participantCount(roundId) views. Tuple words are positional
+// (0 target, 1 deadline, 3 totalCommitted, 5 settled); a short return is a
+// decode error, never a silent zero.
+func (c *Client) ReadRoundViews(ctx context.Context, pool string, roundId *big.Int) (*RoundViews, error) {
+	if roundId == nil || roundId.Sign() < 0 {
+		return nil, fmt.Errorf("round %v: %w", roundId, errInvalidRound)
+	}
+	roundData, err := encodeUintArg(roundsSelector, roundId)
+	if err != nil {
+		return nil, fmt.Errorf("rounds call: %w", err)
+	}
+	raw, err := c.ethCallRaw(ctx, pool, roundData, "latest")
+	if err != nil {
+		return nil, fmt.Errorf("rounds view: %w", err)
+	}
+	target, err := decodeWord(raw, 0)
+	if err != nil {
+		return nil, fmt.Errorf("rounds target: %w", err)
+	}
+	deadline, err := decodeWord(raw, 1)
+	if err != nil {
+		return nil, fmt.Errorf("rounds deadline: %w", err)
+	}
+	committed, err := decodeWord(raw, 3)
+	if err != nil {
+		return nil, fmt.Errorf("rounds totalCommitted: %w", err)
+	}
+	settledWord, err := decodeWord(raw, 5)
+	if err != nil {
+		return nil, fmt.Errorf("rounds settled: %w", err)
+	}
+	expiredData, err := encodeUintArg(expiredAtSelector, roundId)
+	if err != nil {
+		return nil, fmt.Errorf("expired call: %w", err)
+	}
+	expiredRaw, err := c.ethCallRaw(ctx, pool, expiredData, "latest")
+	if err != nil {
+		return nil, fmt.Errorf("expired view: %w", err)
+	}
+	expired, err := parseHexUint(expiredRaw)
+	if err != nil {
+		return nil, fmt.Errorf("decode expired view %q: %w", expiredRaw, err)
+	}
+	countData, err := encodeUintArg(participantCountAtSelector, roundId)
+	if err != nil {
+		return nil, fmt.Errorf("participantCount call: %w", err)
+	}
+	countRaw, err := c.ethCallRaw(ctx, pool, countData, "latest")
+	if err != nil {
+		return nil, fmt.Errorf("participantCount view: %w", err)
+	}
+	count, err := parseHexUint(countRaw)
+	if err != nil {
+		return nil, fmt.Errorf("decode participantCount view %q: %w", countRaw, err)
+	}
+	return &RoundViews{
+		Target:           target,
+		TotalCommitted:   committed,
+		Settled:          settledWord.Sign() != 0,
+		Expired:          expired.Sign() != 0,
+		ParticipantCount: count,
+		RoundId:          new(big.Int).Set(roundId),
+		Deadline:         deadline,
+	}, nil
+}
+
+// errInvalidRound is returned when a round id is nil or negative.
+var errInvalidRound = errors.New("settle: invalid round id")
+
+// encodeUintArg builds selector + ABI-encoded uint256 calldata.
+func encodeUintArg(selector string, id *big.Int) (string, error) {
+	if id == nil || id.Sign() < 0 {
+		return "", fmt.Errorf("round %v: %w", id, errInvalidRound)
+	}
+	h := id.Text(16)
+	if len(h) > 64 {
+		return "", fmt.Errorf("round %v overflows uint256: %w", id, errInvalidRound)
+	}
+	return selector + strings.Repeat("0", 64-len(h)) + h, nil
+}
+
+// decodeWord extracts 32-byte word i from a 0x-prefixed ABI blob.
+func decodeWord(hexStr string, i int) (*big.Int, error) {
+	s := strings.TrimPrefix(strings.TrimPrefix(hexStr, "0x"), "0X")
+	if len(s) < 64*(i+1) {
+		return nil, fmt.Errorf("blob len %d wants word %d", len(s), i)
+	}
+	v := new(big.Int)
+	if _, ok := v.SetString(s[64*i:64*(i+1)], 16); !ok {
+		return nil, fmt.Errorf("bad word %d in %q", i, hexStr)
+	}
+	return v, nil
+}
+
+// ethCallRaw performs a read-only eth_call and returns the raw 0x answer.
+func (c *Client) ethCallRaw(ctx context.Context, to, data, blockTag string) (string, error) {
+	params, err := json.Marshal([]any{
+		map[string]string{"to": to, "data": data},
+		blockTag,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode eth_call: %w", err)
+	}
+	raw, err := c.rpcCall(ctx, "eth_call", params)
+	if err != nil {
+		return "", err
+	}
+	var hexStr string
+	if err := json.Unmarshal(raw, &hexStr); err != nil || hexStr == "" {
+		return "", fmt.Errorf("decode eth_call: %w", err)
+	}
+	return hexStr, nil
 }
 
 // ErrNoReceipt is returned when eth_getTransactionReceipt answers null.
@@ -530,6 +943,31 @@ func (l *Listener) getLogs(ctx context.Context, toBlock string) ([]json.RawMessa
 		Address:   l.pool,
 		Topics:    [][]string{{settledSelector}},
 		FromBlock: l.lastChecked(),
+		ToBlock:   toBlock,
+	}
+	params, err := json.Marshal([]logFilter{filter})
+	if err != nil {
+		return nil, fmt.Errorf("encode filter: %w", err)
+	}
+	raw, err := l.call(ctx, "eth_getLogs", params)
+	if err != nil {
+		return nil, err
+	}
+	var logs []json.RawMessage
+	if err := json.Unmarshal(raw, &logs); err != nil {
+		return nil, fmt.Errorf("decode eth_getLogs: %w", err)
+	}
+	return logs, nil
+}
+
+// getV2Logs queries the v2 pool for RoundStarted and Settled(roundId,total)
+// logs in [roundCursor, toBlock]. One filter with both topics keeps the scan
+// to a single RPC call; parseV2Log separates the kinds afterwards.
+func (l *Listener) getV2Logs(ctx context.Context, roundId *big.Int, toBlock string) ([]json.RawMessage, error) {
+	filter := logFilter{
+		Address:   l.v2pool,
+		Topics:    [][]string{{roundStartedSelector, settledV2Selector}},
+		FromBlock: l.roundCursorOf(roundId),
 		ToBlock:   toBlock,
 	}
 	params, err := json.Marshal([]logFilter{filter})

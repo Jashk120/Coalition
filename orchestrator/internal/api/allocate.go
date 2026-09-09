@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -42,7 +43,7 @@ func (s *Server) handleAllocate(w http.ResponseWriter, r *http.Request) {
 	if !s.checkPoolGate(w, r) {
 		return
 	}
-	if s.ledger.IsSettled() {
+	if s.ledger.FundingClosed() {
 		writeJSONError(w, s.logger, poolSettled("pool settled: allocations are final"))
 		return
 	}
@@ -59,6 +60,7 @@ func (s *Server) handleAllocate(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, s.logger, err)
 		return
 	}
+	s.pinAllocateRound(r.Context(), wallet)
 	name := "coalition-" + strings.TrimPrefix(wallet.String(), "0x")
 	id, err := s.backend.CreateContainer(r.Context(), name, backend.Limits{CPUCores: ent.CPU, MemMB: ent.MemMB})
 	if err != nil {
@@ -82,6 +84,30 @@ func (s *Server) handleAllocate(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("memMB", ent.MemMB),
 		slog.String("container", id))
 	writeJSON(w, http.StatusCreated, allocateResponse{Wallet: wallet.String(), ContainerID: id, Token: token})
+}
+
+// pinAllocateRound pins the wallet's entitlement to the chain-resolved v2
+// current round when round tracking is configured. The ledger's
+// listener-fed stamp may lag a freshly opened round; the chain read wins so
+// a new round's first allocations are not orphaned onto the prior round.
+// Fail-open: an unreachable node (or a verifier without round views) keeps
+// the existing stamp, never fails the allocate.
+func (s *Server) pinAllocateRound(ctx context.Context, wallet domain.WalletAddress) {
+	if s.cfg.PoolV2Address == "" {
+		return
+	}
+	rr, ok := s.verifier.(roundReader)
+	if !ok {
+		return
+	}
+	roundId, err := rr.CurrentRoundId(ctx, s.cfg.PoolV2Address, "latest")
+	if err != nil {
+		s.logger.Warn("allocate round stamp fail-open: node unreachable",
+			slog.String("pool", s.cfg.PoolV2Address),
+			slog.Any("err", err))
+		return
+	}
+	s.ledger.StampRound(wallet, roundId)
 }
 
 // rejectShrink refuses a re-allocate that would drop entitlement below

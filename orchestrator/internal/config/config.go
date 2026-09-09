@@ -40,6 +40,7 @@ type Config struct {
 	WindowHours     int64
 	ProviderAddress domain.WalletAddress
 	PoolAddress     string
+	PoolV2Address   string
 	Port            string
 	DockerHost      string
 	NetworkMode     string
@@ -137,6 +138,15 @@ func loadFrom(lookup func(string) (string, bool)) (Config, error) {
 			return Config{}, fmt.Errorf("POOL_ADDRESS: %w", err)
 		}
 		cfg.PoolAddress = pool.String()
+	}
+
+	poolV2Raw := get("POOL_V2_ADDRESS", "")
+	if poolV2Raw != "" {
+		poolV2, err := domain.NewWalletAddress(poolV2Raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("POOL_V2_ADDRESS: %w", err)
+		}
+		cfg.PoolV2Address = poolV2.String()
 	}
 
 	portRaw := get("PORT", "8080")

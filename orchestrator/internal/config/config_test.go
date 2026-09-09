@@ -275,4 +275,29 @@ func Test_LoadFrom_pool_optional_parses(t *testing.T) {
 	if cfg.PoolAddress != "0x70997970c51812dc3a010c7d01b50e0d17dc79c8" {
 		t.Errorf("PoolAddress = %q", cfg.PoolAddress)
 	}
+	if cfg.PoolV2Address != "" {
+		t.Errorf("PoolV2Address should default empty, got %q", cfg.PoolV2Address)
+	}
+}
+
+func Test_LoadFrom_pool_v2_optional_parses(t *testing.T) {
+	pool := "0xC6f9B7d5E3f4a2c1B8e6D0F3a5C7b9E1d2F4a6C8"
+	cfg, err := loadFrom(lookupOf(map[string]string{
+		"PROVIDER_ADDRESS":  testProvider,
+		"POOL_V2_ADDRESS":   pool,
+		"ALLOW_NO_APP_AUTH": "1",
+	}))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.PoolV2Address != "0xc6f9b7d5e3f4a2c1b8e6d0f3a5c7b9e1d2f4a6c8" {
+		t.Errorf("PoolV2Address = %q", cfg.PoolV2Address)
+	}
+	if cfg.PoolAddress != "" {
+		t.Errorf("PoolAddress should stay empty, got %q", cfg.PoolAddress)
+	}
+	bad := map[string]string{"PROVIDER_ADDRESS": testProvider, "ALLOW_NO_APP_AUTH": "1", "POOL_V2_ADDRESS": "nope"}
+	if _, err := loadFrom(lookupOf(bad)); err == nil {
+		t.Fatal("bad POOL_V2_ADDRESS must fail")
+	}
 }

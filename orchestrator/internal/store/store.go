@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"sort"
 	"strings"
 	"sync"
@@ -55,7 +56,10 @@ func MicroCU(cpu float64) int64 { return cpuMicro(cpu) }
 
 func microToFloat(micro int64) float64 { return float64(micro) / microPerCU }
 
-// record is the per-wallet ledger entry.
+// record is the per-wallet ledger entry. roundId pins the entitlement to the
+// funding round that admitted it (nil = admitted before round tracking
+// began); Authenticate enforces the pin once a round is observed, so prior
+// settled rounds confer no access and expired-unfilled rounds confer none.
 type record struct {
 	entitlement domain.Entitlement
 	usage       domain.Usage
@@ -69,6 +73,8 @@ type record struct {
 	pending     bool
 	prevEnt     domain.Entitlement
 	prevExists  bool
+	prevRound   *big.Int
+	roundId     *big.Int
 }
 
 // inflightExec is one registered-but-unbilled execution: its elapsed wall
@@ -79,7 +85,9 @@ type inflightExec struct {
 	memMB float64
 }
 
-// Store is the mutex-guarded in-memory ledger.
+// Store is the mutex-guarded in-memory ledger. settled/settledAt track the
+// legacy v1 pool; settledRounds/currentRound track the v2 round-scoped pool.
+// The two coexist: a v1 settle never flips a round and vice versa.
 type Store struct {
 	mu        sync.RWMutex
 	windowHrs float64
@@ -88,11 +96,14 @@ type Store struct {
 	settledAt time.Time
 	spent     map[string]bool
 	now       func() time.Time
+
+	currentRound  *big.Int
+	settledRounds map[string]time.Time
 }
 
 // NewStore builds an empty ledger for a window of windowHours hours.
 func NewStore(windowHours int64) *Store {
-	return &Store{windowHrs: float64(windowHours), wallets: make(map[string]*record), spent: make(map[string]bool), now: time.Now}
+	return &Store{windowHrs: float64(windowHours), wallets: make(map[string]*record), spent: make(map[string]bool), settledRounds: make(map[string]time.Time), now: time.Now}
 }
 
 // windowDuration is the compute window as a time.Duration.
@@ -163,7 +174,20 @@ func (s *Store) mintTokenLocked(r *record) (string, error) {
 	if r.allocatedAt.IsZero() {
 		r.allocatedAt = s.now()
 	}
+	if r.roundId == nil {
+		s.stampRoundLocked(r)
+	}
 	return token, nil
+}
+
+// stampRoundLocked pins r to the currently observed round (nil when no
+// round was ever observed). Callers hold the write lock.
+func (s *Store) stampRoundLocked(r *record) {
+	if s.currentRound == nil {
+		r.roundId = nil
+		return
+	}
+	r.roundId = new(big.Int).Set(s.currentRound)
 }
 
 // IssueToken mints a fresh opaque bearer token for a wallet and returns the
@@ -186,8 +210,14 @@ func (s *Store) IssueToken(w domain.WalletAddress) (string, error) {
 // with a known wallet entry are 403 (ErrTokenRevoked / ErrTokenExpired).
 // Expiry epoch: once settled, validity runs to settledAt + window (the window
 // starts at settlement, so allocations made pre-settle stay usable through
-// the compute window); pre-settle it runs to allocatedAt + window. An
+// the compute window); pre-settle it runs to allocatedAt + window. Round
+// entitlements anchor to their own round's settle instant instead. An
 // explicit expiresAt override (test hook) always wins.
+//
+// Round allowlist: once any round is observed, the wallet's stamped roundId
+// must equal the current round, else 403. Prior settled rounds confer no
+// access, expired-unfilled rounds confer none, and expiry of the current
+// round alone never revokes /run continuity for same-round wallets.
 func (s *Store) Authenticate(w domain.WalletAddress, bearer string) error {
 	if bearer == "" {
 		return fmt.Errorf("wallet %s missing token: %w", w.String(), ErrTokenInvalid)
@@ -205,10 +235,17 @@ func (s *Store) Authenticate(w domain.WalletAddress, bearer string) error {
 	if r.revoked {
 		return fmt.Errorf("wallet %s: %w", w.String(), ErrTokenRevoked)
 	}
+	if s.currentRound != nil && (r.roundId == nil || r.roundId.Cmp(s.currentRound) != 0) {
+		return fmt.Errorf("wallet %s not in current round %s: %w", w.String(), s.currentRound, ErrTokenExpired)
+	}
 	expiry := r.expiresAt
 	if expiry.IsZero() {
 		base := r.allocatedAt
-		if s.settled && !s.settledAt.IsZero() {
+		if r.roundId != nil {
+			if ts, ok := s.settledRounds[r.roundId.String()]; ok && !ts.IsZero() {
+				base = ts
+			}
+		} else if s.settled && !s.settledAt.IsZero() {
 			base = s.settledAt
 		}
 		expiry = base.Add(s.windowDuration())
@@ -657,8 +694,10 @@ func (s *Store) Reserve(w domain.WalletAddress, cpuMicro, memMB int64, cap Admit
 	} else if !r.pending {
 		r.prevEnt = r.entitlement
 		r.prevExists = true
+		r.prevRound = r.roundId
 	}
 	r.entitlement = domain.Entitlement{CPU: microToFloat(cpuMicro), MemMB: memMB}
+	s.stampRoundLocked(r)
 	if r.allocatedAt.IsZero() {
 		r.allocatedAt = s.now()
 	}
@@ -677,6 +716,7 @@ func (s *Store) ConfirmReserve(w domain.WalletAddress, containerID string) error
 	}
 	r.pending = false
 	r.prevExists = false
+	r.prevRound = nil
 	r.containerID = containerID
 	return nil
 }
@@ -696,8 +736,10 @@ func (s *Store) RollbackReserve(w domain.WalletAddress) {
 		return
 	}
 	r.entitlement = r.prevEnt
+	r.roundId = r.prevRound
 	r.pending = false
 	r.prevExists = false
+	r.prevRound = nil
 }
 
 // cpuMicroOf converts a stored float slice to micro-CU for exact accounting.
@@ -752,6 +794,117 @@ func (s *Store) SettledAt() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.settledAt
+}
+
+// SetCurrentRound records the latest observed v2 funding round. Later rounds
+// supersede earlier ones: entitlements stamped to a prior round stop
+// authenticating (see Authenticate). Nil ids are ignored.
+func (s *Store) SetCurrentRound(id *big.Int) {
+	if id == nil || id.Sign() < 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.currentRound = new(big.Int).Set(id)
+}
+
+// CurrentRound returns a copy of the latest observed round, or nil when no
+// round was ever observed (legacy v1 mode: the allowlist stays inactive).
+func (s *Store) CurrentRound() *big.Int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.currentRound == nil {
+		return nil
+	}
+	return new(big.Int).Set(s.currentRound)
+}
+
+// MarkRoundSettled flips one round's settled flag; the first call per round
+// wins and records that round's settle instant, which re-anchors token
+// expiry for entitlements stamped to it. Nil ids never flip.
+func (s *Store) MarkRoundSettled(id *big.Int) bool {
+	if id == nil || id.Sign() < 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := id.String()
+	if _, ok := s.settledRounds[key]; ok {
+		return false
+	}
+	s.settledRounds[key] = s.now()
+	return true
+}
+
+// IsRoundSettled reports whether the round settled. Nil ids read unsettled.
+func (s *Store) IsRoundSettled(id *big.Int) bool {
+	if id == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.settledRounds[id.String()]
+	return ok
+}
+
+// RoundSettledAt returns the instant the round settled, or zero if unsettled.
+func (s *Store) RoundSettledAt(id *big.Int) time.Time {
+	if id == nil {
+		return time.Time{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.settledRounds[id.String()]
+}
+
+// FundingClosed reports whether new allocations are final: the legacy v1
+// pool settled, or the current round settled. An unsettled current round —
+// funded or expired-unfilled — leaves this false; the expired-unfilled gate
+// lives in the API poolGate, not here.
+func (s *Store) FundingClosed() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.settled {
+		return true
+	}
+	if s.currentRound == nil {
+		return false
+	}
+	_, ok := s.settledRounds[s.currentRound.String()]
+	return ok
+}
+
+// StampRound pins a wallet's record to a funding round (nil clears back to
+// the pre-round era). Unknown wallets are ignored. The allocate path uses it
+// to pin the chain-resolved current round over the listener-fed stamp when
+// the two disagree.
+func (s *Store) StampRound(w domain.WalletAddress, id *big.Int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.wallets[w.String()]
+	if !ok {
+		return
+	}
+	if id == nil {
+		r.roundId = nil
+		return
+	}
+	r.roundId = new(big.Int).Set(id)
+}
+
+// WalletRound returns the round stamped on a wallet's record (nil for the
+// pre-round era), or nil with ErrUnknownWallet for unknown wallets.
+func (s *Store) WalletRound(w domain.WalletAddress) (*big.Int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r, ok := s.wallets[w.String()]
+	if !ok {
+		return nil, fmt.Errorf("wallet %s: %w", w.String(), ErrUnknownWallet)
+	}
+	if r.roundId == nil {
+		return nil, nil
+	}
+	return new(big.Int).Set(r.roundId), nil
 }
 
 // SetNowFunc swaps the clock; tests use it to advance time deterministically.
