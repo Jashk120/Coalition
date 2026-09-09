@@ -125,7 +125,8 @@ curl -s -X POST localhost:8080/run \
 
 Status codes: `401 {"code":"unauthorized"}` for missing/unknown tokens,
 `403 {"code":"forbidden"}` for revoked/expired tokens,
-`409 {"code":"pool_settled"}` for any `/allocate` after settle,
+`409 {"code":"pool_settled"}` for post-settle `/allocate` by wallets with
+neither a pre-settle reservation nor on-chain stake in the settled round,
 `409 {"code":"pool_closed"}` for `/allocate`, `/quote`, `/transfer-quota` once
 the on-chain pool expires unfilled (`/run` keeps serving — see pool awareness),
 `409 {"code":"pool_exhausted"}` when a slice would oversubscribe the pool or
@@ -168,8 +169,13 @@ or the reservation rolls back on failure (a failed create never leaves a
 half-admitted wallet). Oversubscribing slices fail with 409 `pool_exhausted`.
 A re-allocate that would drop entitlement below already-burned usage fails
 with 409 `insufficient_quota` — grow-or-hold only, never a silent
-instant-over-budget. After the pool settles every allocate fails with 409
-`pool_settled` — allocations are final.
+instant-over-budget. After the pool settles, wallets with a pre-settle
+reservation may still (re-)allocate, and reservation-less wallets must prove
+on-chain stake in the settled round (`committed(roundId, wallet) > 0`);
+anything else fails with 409 `pool_settled`. The chain-proof path is
+fail-closed: an unreachable node denies new post-settle wallets, never grants
+free quota. Tokens issued post-settle expire at `settledAt + WINDOW_HOURS`
+like all settled-round tokens.
 
 ### POST /run — exec into the wallet container
 
