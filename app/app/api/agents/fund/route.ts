@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import type { Address } from "viem";
 import { fromAtomicUsdc } from "@jx-nexus/coalition";
-import { POOL_ADDRESS, SHARE_ATOMIC } from "@/lib/constants";
+import { POOL_ADDRESS, SEED_META, SHARE_ATOMIC } from "@/lib/constants";
 import {
   USDC_ADDRESS,
   createCircleClient,
@@ -10,13 +9,66 @@ import {
   readCircleEnv,
 } from "@/lib/circle-fund";
 import { log } from "@/lib/logger";
-import { readCommitted, readCurrentRound } from "@/lib/pool-state";
+import { orchestratorBaseUrl, readCurrentRound } from "@/lib/pool-state";
 import type { FundResponse, FundStep } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Server-side app key only — never a NEXT_PUBLIC_ value. */
+function appKey(): string | undefined {
+  const key =
+    process.env["ORCHESTRATOR_APP_KEY"] ?? process.env["APP_KEY"];
+  return key !== undefined && key !== "" ? key : undefined;
+}
+
+/**
+ * Provision one agent slice in the orchestrator after its on-chain commit
+ * lands, so funding and VPS allocation stay one action. Never throws and
+ * never surfaces the agent token: ok flag + error string only.
+ */
+async function allocateSlice(
+  wallet: string,
+  cpu: number,
+  memMB: number,
+): Promise<{ readonly ok: boolean; readonly error?: string }> {
+  const key = appKey();
+  try {
+    const upstream = await fetch(`${orchestratorBaseUrl()}/allocate`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(key === undefined ? {} : { "x-app-key": key }),
+      },
+      body: JSON.stringify({ wallet, cpu, mem: memMB }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!upstream.ok) {
+      let detail = "";
+      try {
+        const payload: unknown = await upstream.json();
+        if (typeof payload === "object" && payload !== null) {
+          if ("error" in payload && typeof payload.error === "string") {
+            detail = `: ${payload.error}`;
+          } else if ("message" in payload && typeof payload.message === "string") {
+            detail = `: ${payload.message}`;
+          }
+        }
+      } catch {
+        detail = "";
+      }
+      return {
+        ok: false,
+        error: `orchestrator returned ${String(upstream.status)}${detail}`,
+      };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) };
+  }
 }
 
 /**
@@ -102,46 +154,11 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         let amount = SHARE_ATOMIC;
         const evenSplit = remaining / BigInt(walletsLeft);
         if (evenSplit < amount) amount = evenSplit > 0n ? evenSplit : remaining;
-
-        // Check what this wallet has already committed in this round and
-        // fund only the delta so re-running fund is idempotent and partial
-        // commits (from a previous interrupted run) are topped up correctly.
-        const walletAddress = await getWalletAddress(client, walletId);
-        if (walletAddress !== null) {
-          const committed = await readCommitted(
-            BigInt(roundId),
-            walletAddress as Address,
-          );
-          if (committed !== null && committed > 0n) {
-            const topUp = amount > committed ? amount - committed : 0n;
-            if (topUp <= 0n) {
-              // Wallet has already covered its share — nothing more to send.
-              const step: FundStep = {
-                walletId,
-                decision: "skipped",
-                reason: `skip: already funded ${fromAtomicUsdc(committed)} USDC in round ${roundId} (share fully covered)`,
-                roundId,
-                approveTxHash: null,
-                commitTxHash: null,
-              };
-              steps.push(step);
-              log("info", "agents.fund.step", {
-                walletId,
-                decision: step.decision,
-                reason: step.reason,
-              });
-              continue;
-            }
-            // Partially committed — fund just the remaining delta.
-            amount = topUp;
-            log("info", "agents.fund.top_up", {
-              walletId,
-              alreadyCommitted: fromAtomicUsdc(committed),
-              topUp: fromAtomicUsdc(topUp),
-              roundId,
-            });
-          }
-        }
+        // No per-wallet funded check: on-chain `committed` is cumulative
+        // across runs while `amount` is this run's marginal slice, so
+        // comparing them deadlocks partial fills (every wallet skips
+        // while a remainder is still outstanding). Past commits are
+        // already sunk into `remaining` via the live total above.
         const shareAmount = amount.toString();
 
         const approve = await executeContractAndWait(client, {
@@ -201,6 +218,19 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           continue;
         }
 
+        // Provision the VPS slice right after the commit lands: one fund
+        // click funds on-chain AND allocates compute. The slice goes to the
+        // actual funder address (Circle wallet), not the display seed
+        // wallet — post-settle the orchestrator only honors proven
+        // participants. A failed allocate never flips funded to failed —
+        // the money moved, so it is only recorded on the step.
+        const funderAddress = await getWalletAddress(client, walletId);
+        const seed = SEED_META[index];
+        const allocation = await allocateSlice(
+          funderAddress ?? seed?.wallet ?? walletId,
+          seed?.cpu ?? 0.1,
+          seed?.memMB ?? 400,
+        );
         const step: FundStep = {
           walletId,
           decision: "funded",
@@ -208,6 +238,10 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           roundId,
           approveTxHash: approve.txHash,
           commitTxHash: commit.txHash,
+          allocateOk: allocation.ok,
+          ...(allocation.error === undefined
+            ? {}
+            : { allocateError: allocation.error }),
         };
         steps.push(step);
         fundedRoundId = roundId;
@@ -217,6 +251,10 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           reason: step.reason,
           approveTxHash: approve.txHash,
           commitTxHash: commit.txHash,
+          allocateOk: allocation.ok,
+          ...(allocation.error === undefined
+            ? {}
+            : { allocateError: allocation.error }),
         });
       } catch (error) {
         const step: FundStep = {

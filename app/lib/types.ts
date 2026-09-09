@@ -113,7 +113,7 @@ export type ActivityResponse =
     }
   | { readonly ok: false; readonly error: string };
 
-export type FundStep = { readonly walletId: string; readonly decision: "funded" | "skipped" | "failed"; readonly reason: string; readonly roundId?: string; readonly approveTxHash: string | null; readonly commitTxHash: string | null };
+export type FundStep = { readonly walletId: string; readonly decision: "funded" | "skipped" | "failed"; readonly reason: string; readonly roundId?: string; readonly approveTxHash: string | null; readonly commitTxHash: string | null; readonly allocateOk?: boolean; readonly allocateError?: string };
 export type FundResponse = { readonly ok: true; readonly pool: string; readonly roundId?: string; readonly steps: readonly FundStep[] } | { readonly ok: false; readonly error: string };
 
 export type RotateResult = { readonly closedRoundId: string; readonly newRoundId: string; readonly finalizeTxHash: string | null; readonly startRoundTxHash: string };
@@ -183,6 +183,8 @@ export type AgentUsageView = {
   readonly memMB: number;
   readonly cuSeconds: number;
   readonly mbHours: number;
+  readonly inFlightCUSeconds?: number;
+  readonly inFlightMBHours?: number;
   readonly budgetCUSeconds: number;
   readonly budgetMBHours: number;
   readonly remainingCUSeconds: number;
