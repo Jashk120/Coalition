@@ -289,19 +289,24 @@ export default function DashboardPage() {
   }, [loadAgents, loadUsage]);
 
   // Polling keeps the dashboard live without manual reloads: pool/round
-  // state plus orchestrator compute usage every 10s, on-chain activity
-  // every 15s (staggered so the throttle-sensitive RPC readers never fire
-  // in the same tick; usage rides the pool tick because it never hits RPC).
+  // state every 10s, on-chain activity every 15s (staggered so the
+  // throttle-sensitive RPC readers never fire in the same tick).
+  // Orchestrator usage polls every 1s: it is a cheap in-memory read (no
+  // RPC), and the per-second tick is what makes live in-flight bars visibly
+  // climb while burns run.
   useEffect(() => {
     const agentsTimer = setInterval(() => {
       void loadAgents();
-      void loadUsage();
     }, 10_000);
+    const usageTimer = setInterval(() => {
+      void loadUsage();
+    }, 1_000);
     const activityTimer = setInterval(() => {
       void loadActivity();
     }, 15_000);
     return () => {
       clearInterval(agentsTimer);
+      clearInterval(usageTimer);
       clearInterval(activityTimer);
     };
   }, [loadAgents, loadUsage, loadActivity]);
@@ -401,7 +406,7 @@ export default function DashboardPage() {
   const freePool = useCallback(async () => {
     if (
       !window.confirm(
-        "Free the orchestrator container pool? Running containers will be stopped so the pool can be reused for the next test.",
+        "Reset the demo loop? Containers are revoked, the finished round is closed, and a fresh round opens for new agents.",
       )
     ) {
       return;
@@ -415,19 +420,31 @@ export default function DashboardPage() {
         cache: "no-store",
       });
       const body = (await parseJson(response)) as FreePoolResponse;
-      if (body.ok) {
-        setFreeResult(JSON.stringify(body.freed) ?? "ok");
-        await loadAgents();
-        await loadActivity();
-      } else {
+      if (!body.ok) {
         setFreeError(body.error);
+        return;
       }
+      setFreeResult(JSON.stringify(body.freed) ?? "ok");
+      const rotateRes = await fetch("/api/agents/rotate", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const rotateBody = (await parseJson(rotateRes)) as RotateResponse;
+      if (rotateBody.ok) {
+        setRotateResult(rotateBody.result);
+        setFundSteps([]);
+      } else {
+        setRotateError(rotateBody.error);
+      }
+      await loadAgents();
+      await loadActivity();
+      await loadUsage();
     } catch (error) {
       setFreeError(error instanceof Error ? error.message : String(error));
     } finally {
       setFreeing(false);
     }
-  }, [loadAgents, loadActivity]);
+  }, [loadAgents, loadActivity, loadUsage]);
 
   return (
     <main>
@@ -435,8 +452,9 @@ export default function DashboardPage() {
         <h1>Coalition — Pool Dashboard</h1>
         <p>
           4-agent funding demo on Arc 5042002. Fund on-chain writes real
-          approve+commit transactions via Circle wallets. Live — pool state
-          and compute usage refresh every 10s, on-chain activity every 15s.
+          approve+commit transactions via Circle wallets. Live — compute
+          usage streams every second, pool state every 10s, on-chain
+          activity every 15s.
         </p>
       </header>
 
@@ -494,7 +512,12 @@ export default function DashboardPage() {
               </span>{" "}
               <span className="fill-label">
                 {usage.agents.length} agent(s) · trailing {usage.windowHours}h
-                · refreshed every 10s
+                · live every 1s
+              </span>
+            </div>
+            <div>
+              <span className="fill-label">
+                Settled agents burn compute on their own — bars climb live.
               </span>
             </div>
             <div className="table-wrap">
@@ -510,8 +533,22 @@ export default function DashboardPage() {
                 </thead>
                 <tbody>
                   {usage.agents.map((agent) => {
-                    const overBudget =
-                      agent.percentUsedCU >= 100 || agent.percentUsedMB >= 100;
+                    const liveCU =
+                      agent.cuSeconds + (agent.inFlightCUSeconds ?? 0);
+                    const liveMB =
+                      agent.mbHours + (agent.inFlightMBHours ?? 0);
+                    const livePctCU =
+                      agent.budgetCUSeconds > 0
+                        ? Math.min(100, (liveCU / agent.budgetCUSeconds) * 100)
+                        : 0;
+                    const livePctMB =
+                      agent.budgetMBHours > 0
+                        ? Math.min(100, (liveMB / agent.budgetMBHours) * 100)
+                        : 0;
+                    const running =
+                      (agent.inFlightCUSeconds ?? 0) > 0 ||
+                      (agent.inFlightMBHours ?? 0) > 0;
+                    const overBudget = livePctCU >= 100 || livePctMB >= 100;
                     return (
                       <tr key={agent.wallet}>
                         <td className="mono">{shortAddress(agent.wallet)}</td>
@@ -523,12 +560,12 @@ export default function DashboardPage() {
                             <div
                               className="fill-bar"
                               style={{
-                                width: `${String(clampPercent(agent.percentUsedCU))}%`,
+                                width: `${String(clampPercent(livePctCU))}%`,
                               }}
                             />
                           </div>
                           <div className="fill-label">
-                            {formatUsage(agent.cuSeconds)} /{" "}
+                            {formatUsage(liveCU)} /{" "}
                             {formatUsage(agent.budgetCUSeconds)} CU-s ·{" "}
                             {formatUsage(agent.remainingCUSeconds)} left
                           </div>
@@ -538,12 +575,12 @@ export default function DashboardPage() {
                             <div
                               className="fill-bar"
                               style={{
-                                width: `${String(clampPercent(agent.percentUsedMB))}%`,
+                                width: `${String(clampPercent(livePctMB))}%`,
                               }}
                             />
                           </div>
                           <div className="fill-label">
-                            {formatUsage(agent.mbHours)} /{" "}
+                            {formatUsage(liveMB)} /{" "}
                             {formatUsage(agent.budgetMBHours)} MB-h ·{" "}
                             {formatUsage(agent.remainingMBHours)} left
                           </div>
@@ -553,20 +590,24 @@ export default function DashboardPage() {
                             className={
                               overBudget
                                 ? "pill pill-bad"
-                                : agent.settled
+                                : running
                                   ? "pill pill-ok"
-                                  : agent.hasContainer
+                                  : agent.settled
                                     ? "pill pill-ok"
-                                    : "pill pill-warn"
+                                    : agent.hasContainer
+                                      ? "pill pill-ok"
+                                      : "pill pill-warn"
                             }
                           >
                             {overBudget
                               ? "over budget"
-                              : agent.settled
-                                ? "settled"
-                                : agent.hasContainer
-                                  ? "active"
-                                  : "no container"}
+                              : running
+                                ? "running"
+                                : agent.settled
+                                  ? "settled"
+                                  : agent.hasContainer
+                                    ? "active"
+                                    : "no container"}
                           </span>
                         </td>
                       </tr>
@@ -909,11 +950,12 @@ export default function DashboardPage() {
       <section className="card" aria-label="Pool controls and funding results">
         <h2>Pool controls + funding results</h2>
         <p className="fill-label">
-          Free pool resets the orchestrator container pool so judges can reuse
-          it for the next test run. Rotate closes a finished round and opens
-          the next one (provider wallet required; refused with a countdown
-          while a round is still fundable). Steps from the last Fund on-chain
-          run need CIRCLE_* server env.
+          Free pool resets the whole demo loop in one click: containers are
+          revoked, the finished round is closed, and a fresh round opens for
+          new agents (provider wallet required for the new round; refused
+          with a countdown while a round is still fundable). Rotate pool
+          alone only opens the next round without touching containers.
+          Steps from the last Fund on-chain run need CIRCLE_* server env.
         </p>
         <button
           className="trigger"
@@ -1014,6 +1056,19 @@ export default function DashboardPage() {
                           >
                             commit {shortAddress(step.commitTxHash)}
                           </a>
+                        </div>
+                      ) : null}
+                      {step.allocateOk !== undefined ? (
+                        <div>
+                          <span
+                            className={
+                              step.allocateOk ? "pill pill-ok" : "pill pill-bad"
+                            }
+                          >
+                            {step.allocateOk
+                              ? "allocated"
+                              : `allocate failed${step.allocateError !== undefined ? `: ${step.allocateError}` : ""}`}
+                          </span>
                         </div>
                       ) : null}
                     </td>
