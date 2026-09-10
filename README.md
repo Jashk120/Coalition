@@ -9,7 +9,13 @@ But equal payment doesn't mean equal usage — agent A might pay $2 for 1GB whil
 - `sdk/` — the `@jx-nexus/coalition` TypeScript package
   (`chains/`, `identity/`, `reputation/`, `pool/`, plus `test/`)
 - `app/` — Next.js dashboard for the 4-agent pool flow (dogfoods the SDK via
-  `file:../sdk`; reads + dry-run decisions only, no on-chain writes)
+  `file:../sdk`; reads plus headless on-chain funding through
+  `POST /api/agents/fund`, no browser-initiated writes)
+- `contracts/` — Foundry project with the `ResourcePool` contract
+  (`src/`, `test/`, `script/`; see `contracts/README.md`)
+- `orchestrator/` — Go service enforcing paid resource limits and serving
+  the resale market (see `orchestrator/README.md`)
+- `subgraph/` — Subgraph Studio subgraph indexing the pool events
 - `plans/` — implementation plans
 
 ## Requirements

@@ -36,13 +36,14 @@ enforcement that is not there.
 | `TARGET_USDC` | `10.00` | no | Funding target, decimal USDC (6-decimal atomic view). Format: digits with optional `.`, max 6 fractional digits, no signs, nonzero (e.g. `10.00`, `0.000001`); anything else is fatal at startup |
 | `WINDOW_HOURS` | `72` | no | Compute window; metering budgets scale with it. Bearer tokens expire at `settledAt + window` once settled, else `allocatedAt + window` |
 | `PROVIDER_ADDRESS` | — | **yes** | `0x` provider wallet; startup fails fast if empty |
-| `POOL_ADDRESS` | — | no | Pool contract; empty disables the settle listener |
+| `POOL_ADDRESS` | — | no | Legacy v1 pool contract; empty disables the v1 settle flow (v2-only mode when only `POOL_V2_ADDRESS` is set) |
+| `POOL_V2_ADDRESS` | — | no | Round-scoped v2 pool contract; empty disables round tracking, the current-round pool gate, and the post-settle chain-proof path. Must equal the dashboard's `NEXT_PUBLIC_POOL_ADDRESS` when both fund the same pool |
 | `PORT` | `8080` | no | HTTP listen port |
 | `DOCKER_HOST` | default socket | no | `unix://` or `tcp://` daemon address. `tcp://` is refused unless `ALLOW_INSECURE_DOCKER_TCP=1` — plaintext Engine API carries root-equivalent access |
 | `ALLOW_INSECURE_DOCKER_TCP` | empty (deny) | no | Set `1` to allow a `tcp://` `DOCKER_HOST`. Prefer the unix socket |
 | `REQUIRE_DOCKER` | empty (warn+memory fallback) | no | Set `1` to fatal when the daemon is unreachable |
 | `DOCKER_NETWORK_MODE` | `none` | no | Pinned `NetworkMode` for every wallet container. Demo exec workloads need no network, so the default isolates them; set `bridge` only if workloads must egress |
-| `RPC_URL` | `https://rpc.testnet.arc.io` | no | Arc JSON-RPC endpoint for settle polling and transfer receipt checks. Must be `https`, except `http://localhost`/`127.0.0.1` (allowed for httptest boot tests) — anything else is fatal at startup |
+| `RPC_URL` | `https://rpc.testnet.arc.io` | no | Arc JSON-RPC endpoint for settle polling and transfer receipt checks. Must be `https`, except `http://localhost`/`127.0.0.1` (allowed for httptest boot tests) — anything else is fatal at startup. A private endpoint is recommended in shared deploys: the public free tier 429s under aggregate dashboard (agents 10s, activity 15s, usage 1s) plus orchestrator (`POLL_INTERVAL`) polling |
 | `POLL_INTERVAL` | `5s` | no | Settle poll cadence |
 | `CONFIRMATIONS` | `1` | no | Minimum confirmations for settle logs and transfer receipts alike |
 | `REAPER_INTERVAL` | `10s` | no | Background reaper tick: kills containers whose billed usage plus in-flight estimate exceeds budget |
@@ -142,11 +143,26 @@ breach `MAX_AGENTS` (allocate and transfer-recipient paths alike),
 When `POOL_ADDRESS` is set, `/allocate`, `/quote`, and `/transfer-quota` read
 `settled()`, `expired()`, and `totalCommitted()` via `eth_call` first: an
 expired-but-unsettled pool closes the funding endpoints with 409
-`pool_closed`. `/run` is deliberately ungated — existing allocations keep
+`pool_closed`. When `POOL_V2_ADDRESS` is set the same rule applies to the
+current round's views instead: only the current round's expired-unfilled
+state closes funding. `/run` is deliberately ungated — existing allocations keep
 local continuity because no funds ever moved, so there is nothing to unwind,
 and killing running work on expiry would destroy value for free. An
-unreachable node (or an unset `POOL_ADDRESS`) fails open with a warning, never
+unreachable node (or an unset `POOL_ADDRESS` / `POOL_V2_ADDRESS`) fails open with a warning, never
 a denial: a down node must not brick local metering.
+
+V2-only mode: with `POOL_ADDRESS` empty the legacy v1 settle flow is skipped
+entirely and only the round-scoped tracker runs. Same-pool mode: when
+`POOL_ADDRESS` equals `POOL_V2_ADDRESS` (case-insensitive, the same
+contract) the legacy flow is likewise skipped — the v1 `settled()` getter
+mirrors the current round and its `Settled(uint256)` log fires alongside the
+v2 `Settled(roundId, total)`, so the legacy scan would flip the permanent v1
+settled flag and pin `FundingClosed()` true forever across round rotates
+(check logs `legacy-skipped-same-as-v2`). Before evaluating
+`FundingClosed`, the allocate path re-syncs the tracked round against the
+chain's `currentRoundId` (advance-only, fail-open), so a rotate that the
+settle poller has not seen yet cannot 409 fresh-round allocates against the
+prior settled round.
 
 ## Endpoints
 
@@ -170,13 +186,26 @@ or the reservation rolls back on failure (a failed create never leaves a
 half-admitted wallet). Oversubscribing slices fail with 409 `pool_exhausted`.
 A re-allocate that would drop entitlement below already-burned usage fails
 with 409 `insufficient_quota` — grow-or-hold only, never a silent
-instant-over-budget. After the pool settles, wallets with a pre-settle
+instant-over-budget. The shrink check is skipped on a round change (the
+wallet's stamped round differs from the tracked current round): that burn
+belongs to the prior round and resets at confirm time, so comparing it
+against the fresh entitlement would wrongly refuse the re-allocate.
+After the pool settles, wallets with a pre-settle
 reservation may still (re-)allocate, and reservation-less wallets must prove
 on-chain stake in the settled round (`committed(roundId, wallet) > 0`);
 anything else fails with 409 `pool_settled`. The chain-proof path is
 fail-closed: an unreachable node denies new post-settle wallets, never grants
 free quota. Tokens issued post-settle expire at `settledAt + WINDOW_HOURS`
 like all settled-round tokens.
+
+Round-change usage reset: when a reservation crosses a funding round (the
+pre-reserve stamped round differs from the confirm-time round, after the
+allocate-path chain pin), `ConfirmReserve` zeroes that wallet's billed usage
+and in-flight so the re-funded wallet starts the new round on a fresh
+budget. Same-round resizes keep their burn, and a rolled-back reservation
+(`RollbackReserve` on container-create failure) preserves burn — the reset
+lives in confirm, never in reserve, so a failed create cannot erase usage
+history.
 
 ### POST /run — exec into the wallet container
 
@@ -308,7 +337,14 @@ curl -s localhost:8080/healthz
 - Settle rule: the listener polls `eth_getLogs` for `POOL_ADDRESS` from the
   latest block (boot cursor is `latest` — restarts never trigger a genesis
   rescan, which also means a `Settled` emitted while down is missed: accepted
-  testnet posture, mainnet needs cursor persistence). The cursor never advances
+  testnet posture, mainnet needs cursor persistence). With `POOL_V2_ADDRESS`
+  set the same poller additionally tracks round-scoped state (`RoundStarted`
+  advances the tracked round, per-round `Settled(roundId, total)` flips only
+  its own round's ledger entry after its own chain gate, and every poll
+  re-evaluates the gate from chain state so a top-up with no new event still
+  flips). An empty `POOL_ADDRESS` runs v2-only; `POOL_ADDRESS` equal to
+  `POOL_V2_ADDRESS` skips the legacy flow on the shared contract (same pin
+  reason as above). The cursor never advances
   past unprocessed logs — it pins at the first below-target log — and every
   poll additionally re-evaluates the funding gate from chain state
   (`totalCommitted` `eth_call`), so a post-cursor top-up with no new event

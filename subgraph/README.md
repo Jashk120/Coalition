@@ -3,15 +3,18 @@
 Subgraph Studio subgraph indexing the Coalition `ResourcePool` on Arc
 testnet (chain `5042002`, RPC `https://rpc.testnet.arc.network`).
 
-- Pool: `0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd`
+- Pool: `0x8b9f38c7B005Dd67203e27240F45335a9e64F692`
 - Pool state at scaffold time: target 10 USDC (`10000000` atomic, 6-dec),
   `totalCommitted` 0, `settled` false.
 - Indexer: Subgraph Studio deployment — ID: `TODO_STUDIO_DEPLOYMENT_ID`
 
 Event shapes are derived from `sdk/src/pool/abi.ts` (generated from
 `contracts/out/ResourcePool.sol/ResourcePool.json`); `abis/ResourcePool.json`
-carries the six indexed events. Amounts are 6-decimal atomic USDC — see the
-dual-decimal warning in `sdk/README.md`.
+carries the six indexed events. Only the v1 (unindexed-round) shapes are
+indexed: the v2 overloads (`Committed(agent, roundId, amount)`,
+`Settled(roundId, total)`) fire alongside them in the same transactions, so
+indexing the v1 legs still captures every fund movement. Amounts are
+6-decimal atomic USDC — see the dual-decimal warning in `sdk/README.md`.
 
 ## Prerequisites
 
@@ -56,9 +59,9 @@ deployment ID and verify the endpoint answers, e.g.:
 
 ## Refreshing startBlock
 
-`subgraph.yaml` pins `startBlock: 61056595` (Arc latest `61057595` at
-scaffold time minus 1000). If the pool was deployed earlier, lower it to the
-pool's deployment block before redeploying:
+`subgraph.yaml` pins `startBlock: 61221987` (the pool's deployment block).
+If the pool redeploys, lower it to the new deployment block before
+redeploying:
 
 ```sh
 cast block-number --rpc-url https://rpc.testnet.arc.network
