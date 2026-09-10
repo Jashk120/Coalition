@@ -10,11 +10,13 @@ import (
 )
 
 type transferRequest struct {
-	From   string  `json:"from"`
-	To     string  `json:"to"`
-	MB     int64   `json:"mb"`
-	CU     float64 `json:"cu"`
-	TxHash string  `json:"txHash"`
+	From     string            `json:"from"`
+	To       string            `json:"to"`
+	MB       int64             `json:"mb"`
+	CU       float64           `json:"cu"`
+	TxHash   string            `json:"txHash"`
+	Legs     []transferLeg     `json:"legs"`
+	Payments []transferPayment `json:"payments"`
 }
 
 type quotaSlice struct {
@@ -35,6 +37,10 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	var req transferRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSONError(w, s.logger, badRequest("invalid JSON: "+err.Error()))
+		return
+	}
+	if len(req.Legs) > 0 || len(req.Payments) > 0 {
+		s.handleTransferMulti(w, r, req)
 		return
 	}
 	from, err := domain.NewWalletAddress(req.From)

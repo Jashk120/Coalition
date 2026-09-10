@@ -66,6 +66,10 @@ func poolClosed(msg string) *APIError {
 	return &APIError{Status: http.StatusConflict, Code: "pool_closed", Message: msg}
 }
 
+func insufficientSpare(msg string) *APIError {
+	return &APIError{Status: http.StatusConflict, Code: "insufficient_spare", Message: msg}
+}
+
 // writeJSONError is the single error funnel: every handler error passes here.
 func writeJSONError(w http.ResponseWriter, logger *slog.Logger, err error) {
 	var apiErr *APIError

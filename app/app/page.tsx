@@ -41,6 +41,53 @@ type ActivityState =
   | { readonly status: "ready"; readonly events: readonly ActivityEvent[] }
   | { readonly status: "error"; readonly message: string };
 
+type MarketEntry = {
+  readonly wallet: string;
+  readonly availableMB: string;
+  readonly availableCU: string;
+  readonly ratePerMBAtomic: string;
+  readonly ratePerCUAtomic: string;
+  readonly empty?: boolean;
+  readonly reason?: string;
+};
+
+type MarketState =
+  | { readonly status: "loading" }
+  | { readonly status: "ready"; readonly entries: readonly MarketEntry[] }
+  | { readonly status: "error"; readonly message: string };
+
+type PlanLeg = {
+  readonly wallet: string;
+  readonly mb: number;
+  readonly cuMicro: number;
+  readonly amountAtomic: string;
+};
+
+type PlanView = {
+  readonly sellers: readonly PlanLeg[];
+  readonly totalAtomic: string;
+};
+
+type PlanState =
+  | { readonly status: "idle" }
+  | { readonly status: "loading" }
+  | { readonly status: "ready"; readonly plan: PlanView }
+  | { readonly status: "error"; readonly message: string };
+
+type BuyResult = {
+  readonly buyer: string;
+  readonly legsPaid: number;
+  readonly totalAtomic: string;
+  readonly to: unknown;
+  readonly toToken?: string;
+};
+
+type BuyState =
+  | { readonly status: "idle" }
+  | { readonly status: "paying" }
+  | { readonly status: "ready"; readonly result: BuyResult }
+  | { readonly status: "error"; readonly message: string };
+
 type UsageState =
   | { readonly status: "loading" }
   | {
@@ -179,6 +226,11 @@ export default function DashboardPage() {
     null,
   );
   const [namespacesError, setNamespacesError] = useState<string | null>(null);
+  const [market, setMarket] = useState<MarketState>({ status: "loading" });
+  const [wantMem, setWantMem] = useState("200");
+  const [wantCu, setWantCu] = useState("0.05");
+  const [plan, setPlan] = useState<PlanState>({ status: "idle" });
+  const [buy, setBuy] = useState<BuyState>({ status: "idle" });
 
   const loadAgents = useCallback(async () => {
     try {
@@ -235,6 +287,97 @@ export default function DashboardPage() {
       });
     }
   }, []);
+
+  const loadMarket = useCallback(async () => {
+    try {
+      const response = await fetch("/api/resale/market", { cache: "no-store" });
+      const body = (await parseJson(response)) as
+        | { readonly ok: true; readonly market: readonly MarketEntry[] }
+        | { readonly ok: false; readonly error: string };
+      if (body.ok) {
+        setMarket({ status: "ready", entries: body.market });
+      } else {
+        setMarket({ status: "error", message: body.error });
+      }
+    } catch (error) {
+      setMarket({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
+
+  const previewPlan = useCallback(async () => {
+    setPlan({ status: "loading" });
+    setBuy({ status: "idle" });
+    try {
+      const mem = Number.parseInt(wantMem, 10);
+      const cu = Number.parseFloat(wantCu);
+      const response = await fetch("/api/resale/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ wallet: OUTSIDE_BUYER.wallet, mem, cu }),
+        cache: "no-store",
+      });
+      const body = (await parseJson(response)) as
+        | { readonly ok: true; readonly plan: PlanView }
+        | { readonly ok: false; readonly error: string };
+      if (body.ok) {
+        setPlan({ status: "ready", plan: body.plan });
+      } else {
+        setPlan({ status: "error", message: body.error });
+      }
+    } catch (error) {
+      setPlan({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [wantMem, wantCu]);
+
+  const payPlan = useCallback(async () => {
+    if (plan.status !== "ready") return;
+    setBuy({ status: "paying" });
+    try {
+      const response = await fetch("/api/resale/buy", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ plan: plan.plan }),
+        cache: "no-store",
+      });
+      const body = (await parseJson(response)) as
+        | {
+            readonly ok: true;
+            readonly buyer: string;
+            readonly legsPaid: number;
+            readonly totalAtomic: string;
+            readonly to: unknown;
+            readonly toToken?: string;
+          }
+        | { readonly ok: false; readonly error: string };
+      if (body.ok) {
+        setBuy({
+          status: "ready",
+          result: {
+            buyer: body.buyer,
+            legsPaid: body.legsPaid,
+            totalAtomic: body.totalAtomic,
+            to: body.to,
+            ...(body.toToken === undefined ? {} : { toToken: body.toToken }),
+          },
+        });
+        await loadUsage();
+        await loadMarket();
+      } else {
+        setBuy({ status: "error", message: body.error });
+      }
+    } catch (error) {
+      setBuy({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [plan, loadUsage, loadMarket]);
 
   const fundDemo = useCallback(async () => {
     setFunding(true);
@@ -398,10 +541,11 @@ export default function DashboardPage() {
     void loadQuotes();
     void loadActivity();
     void loadTerms();
+    void loadMarket();
     return () => {
       cancelled = true;
     };
-  }, [loadActivity]);
+  }, [loadActivity, loadMarket]);
 
   const freePool = useCallback(async () => {
     if (
@@ -484,6 +628,144 @@ export default function DashboardPage() {
         </p>
         <div className="mono">{OUTSIDE_BUYER.wallet}</div>
         <div className="mono">{OUTSIDE_BUYER.ensName}</div>
+      </section>
+
+      <section className="card" aria-label="Resale market">
+        <h2>Resale market</h2>
+        <p className="fill-label">
+          Spare per agent at cost basis. Agent-5 (outside buyer) previews a
+          fill plan, then pays each leg from its own Circle wallet via the
+          x402 Gateway flow — no local key. After the buy the buyer lands in
+          Live Compute Usage like the other agents.
+        </p>
+        {market.status === "loading" ? (
+          <div className="state">Loading resale market…</div>
+        ) : market.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Market unavailable: {market.message}
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Seller</th>
+                  <th>Spare MB / CU</th>
+                  <th>Rate (atomic)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {market.entries.map((entry) => (
+                  <tr key={entry.wallet}>
+                    <td className="mono">{shortAddress(entry.wallet)}</td>
+                    <td>
+                      {entry.empty === true ? (
+                        <span className="state">
+                          No quota — {entry.reason ?? "not allocated"}
+                        </span>
+                      ) : (
+                        <span className="fill-label">
+                          {entry.availableMB} MB / {entry.availableCU} CU-micro
+                        </span>
+                      )}
+                    </td>
+                    <td className="mono">
+                      {entry.empty === true
+                        ? "—"
+                        : `${entry.ratePerMBAtomic}/MB + ${entry.ratePerCUAtomic}/CU`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="fill-label">
+          Want mem (MB) + CU, preview the fill plan, then pay it leg by leg.
+        </p>
+        <label className="fill-label">
+          mem MB{" "}
+          <input
+            value={wantMem}
+            onChange={(event) => setWantMem(event.target.value)}
+            inputMode="numeric"
+            aria-label="Wanted memory in MB"
+          />
+        </label>{" "}
+        <label className="fill-label">
+          CU{" "}
+          <input
+            value={wantCu}
+            onChange={(event) => setWantCu(event.target.value)}
+            inputMode="decimal"
+            aria-label="Wanted compute units"
+          />
+        </label>{" "}
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void previewPlan()}
+          disabled={plan.status === "loading" || buy.status === "paying"}
+        >
+          {plan.status === "loading" ? "Planning…" : "Preview plan"}
+        </button>{" "}
+        <button
+          className="trigger"
+          type="button"
+          onClick={() => void payPlan()}
+          disabled={plan.status !== "ready" || buy.status === "paying"}
+        >
+          {buy.status === "paying" ? "Paying…" : "Pay via Gateway"}
+        </button>
+        {plan.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Plan failed: {plan.message}
+          </div>
+        ) : null}
+        {plan.status === "ready" ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Seller</th>
+                  <th>MB</th>
+                  <th>CU-micro</th>
+                  <th>Cost (USDC)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.plan.sellers.map((leg) => (
+                  <tr key={leg.wallet}>
+                    <td className="mono">{shortAddress(leg.wallet)}</td>
+                    <td className="mono">{leg.mb}</td>
+                    <td className="mono">{leg.cuMicro}</td>
+                    <td className="mono">{formatUsdc(leg.amountAtomic)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="fill-label">
+              Total {formatUsdc(plan.plan.totalAtomic)} USDC across{" "}
+              {plan.plan.sellers.length} leg(s)
+            </div>
+          </div>
+        ) : null}
+        {buy.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Buy failed: {buy.message}
+          </div>
+        ) : null}
+        {buy.status === "ready" ? (
+          <div className="state">
+            Bought {buy.result.legsPaid} leg(s) for{" "}
+            {formatUsdc(buy.result.totalAtomic)} USDC — buyer{" "}
+            <span className="mono">{shortAddress(buy.result.buyer)}</span>{" "}
+            holds quota (see Live Compute Usage).
+            {buy.result.toToken !== undefined ? (
+              <div className="mono">token {buy.result.toToken}</div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="card" aria-label="Pool controls and funding results">

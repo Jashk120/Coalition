@@ -594,11 +594,170 @@ func (s *Store) TransferPaid(from, to domain.WalletAddress, mb int64, cuMicro in
 	return toToken, nil
 }
 
+// SpareEntry is one wallet's movable surplus for fill-plan ranking: integer
+// remaining micro-CU and MB (usage plus in-flight spread over the window)
+// plus the floor-clamped remaining MB-hours budget used for sort order.
+type SpareEntry struct {
+	Wallet     string
+	RemMicro   int64
+	RemMem     int64
+	RemMBHours int64
+}
+
+// Spares snapshots every wallet's surplus except exclude, unsorted. Callers
+// sort (remaining MB-hours desc, wallet asc) and greedily fill the want.
+func (s *Store) Spares(exclude domain.WalletAddress) []SpareEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := s.now()
+	out := make([]SpareEntry, 0, len(s.wallets))
+	for w, r := range s.wallets {
+		if w == exclude.String() {
+			continue
+		}
+		remMicro, remMem := s.remainingLocked(r, now)
+		_, memBudget := s.Budgets(r.entitlement)
+		out = append(out, SpareEntry{
+			Wallet:     w,
+			RemMicro:   remMicro,
+			RemMem:     remMem,
+			RemMBHours: clampFloor(memBudget - r.usage.MBHours),
+		})
+	}
+	return out
+}
+
+// normalizeProof lowercases and trims a settlement/tx proof id for spend-once
+// comparison across both rails, which share one spent map.
+func normalizeProof(id string) string { return strings.ToLower(strings.TrimSpace(id)) }
+
+// CheckSettlementsUnused reports ErrDuplicatePayment when any id is empty,
+// repeated inside ids, or already spent. Pure pre-check: it mutates nothing.
+func (s *Store) CheckSettlementsUnused(ids []string) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := make(map[string]bool, len(ids))
+	for _, raw := range ids {
+		id := normalizeProof(raw)
+		if id == "" {
+			return fmt.Errorf("empty settlement id: %w", domain.ErrInvalidQuota)
+		}
+		if seen[id] || s.spent[id] {
+			return fmt.Errorf("settlement %s already spent: %w", raw, ErrDuplicatePayment)
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+// MultiLeg is one seller's slice of an atomic multi-seller settlement:
+// seller gives MB megabytes and CUMicro micro-CU to the buyer.
+type MultiLeg struct {
+	Seller  domain.WalletAddress
+	MB      int64
+	CUMicro int64
+}
+
+// TransferMultiPaid moves every leg from its seller to buyer, marks every
+// settlement id spent, and mints the buyer's token when the buyer is new —
+// all inside ONE lock. Every seller's capacity, the zero-drain rule, the new
+// buyer MAX_AGENTS cap, and every proof's spend-once state are pre-checked
+// before the first mutation, so any error returns with zero state changed:
+// no partial moves, no consumed proofs, no minted token.
+func (s *Store) TransferMultiPaid(buyer domain.WalletAddress, legs []MultiLeg, settlementIDs []string, maxAgents int64) (toToken string, err error) {
+	if len(legs) == 0 || len(legs) != len(settlementIDs) {
+		return "", fmt.Errorf("legs=%d proofs=%d: %w", len(legs), len(settlementIDs), domain.ErrInvalidQuota)
+	}
+	type agg struct {
+		mb      int64
+		cuMicro int64
+	}
+	bySeller := make(map[string]*agg, len(legs))
+	order := make([]string, 0, len(legs))
+	ids := make([]string, len(settlementIDs))
+	seen := make(map[string]bool, len(settlementIDs))
+	for i, leg := range legs {
+		if leg.MB < 0 || leg.CUMicro < 0 || (leg.MB == 0 && leg.CUMicro == 0) {
+			return "", fmt.Errorf("leg %d mb=%d cuMicro=%d: %w", i, leg.MB, leg.CUMicro, domain.ErrInvalidQuota)
+		}
+		if leg.Seller.String() == buyer.String() {
+			return "", fmt.Errorf("self transfer: %w", ErrInsufficientQuota)
+		}
+		id := normalizeProof(settlementIDs[i])
+		if id == "" {
+			return "", fmt.Errorf("leg %d empty settlement id: %w", i, domain.ErrInvalidQuota)
+		}
+		if seen[id] {
+			return "", fmt.Errorf("settlement %s already spent: %w", settlementIDs[i], ErrDuplicatePayment)
+		}
+		seen[id] = true
+		ids[i] = id
+		key := leg.Seller.String()
+		a, ok := bySeller[key]
+		if !ok {
+			a = &agg{}
+			bySeller[key] = a
+			order = append(order, key)
+		}
+		a.mb += leg.MB
+		a.cuMicro += leg.CUMicro
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		if s.spent[id] {
+			return "", fmt.Errorf("settlement %s already spent: %w", id, ErrDuplicatePayment)
+		}
+	}
+	now := s.now()
+	for _, key := range order {
+		src, ok := s.wallets[key]
+		if !ok {
+			return "", fmt.Errorf("wallet %s: %w", key, ErrUnknownWallet)
+		}
+		a := bySeller[key]
+		remMicro, remMem := s.remainingLocked(src, now)
+		if a.mb > remMem || a.cuMicro > remMicro {
+			return "", fmt.Errorf("wallet %s wants mb=%d cuMicro=%d: %w", key, a.mb, a.cuMicro, ErrInsufficientQuota)
+		}
+		if a.mb > 0 && a.mb == remMem || a.cuMicro > 0 && a.cuMicro == remMicro {
+			return "", fmt.Errorf("wallet %s move drains slice to zero: %w", key, ErrInsufficientQuota)
+		}
+	}
+	dst, ok := s.wallets[buyer.String()]
+	newBuyer := !ok
+	if newBuyer && int64(s.distinctLocked()) >= maxAgents {
+		return "", fmt.Errorf("pool caps at %d agents: %w", maxAgents, ErrPoolExhausted)
+	}
+	if newBuyer {
+		dst = &record{}
+		s.wallets[buyer.String()] = dst
+		if tok, err := s.mintTokenLocked(dst); err != nil {
+			delete(s.wallets, buyer.String())
+			return "", err
+		} else {
+			toToken = tok
+		}
+	}
+	for _, key := range order {
+		a := bySeller[key]
+		src := s.wallets[key]
+		srcMicro := cpuMicroOf(src.entitlement.CPU)
+		src.entitlement.MemMB -= a.mb
+		src.entitlement.CPU = microToFloat(srcMicro - a.cuMicro)
+		dst.entitlement.MemMB += a.mb
+		dst.entitlement.CPU = microToFloat(cpuMicroOf(dst.entitlement.CPU) + a.cuMicro)
+	}
+	for _, id := range ids {
+		s.spent[id] = true
+	}
+	return toToken, nil
+}
+
 // remainingLocked returns the sender's remaining micro-CU and MB including
 // in-flight reservations: usage plus unbilled in-flight spend, spread over
 // the window, in integers.
-func (s *Store) remainingLocked(r *record, now time.Time) (microCU int64, memMB int64) {
-	pendingCU, pendingMB := s.inflightSpendLocked(r, now)
+func (s *Store) remainingLocked(r *record, now time.Time) (microCU int64, memMB int64) {	pendingCU, pendingMB := s.inflightSpendLocked(r, now)
 	usedMicro := int64(math.Round((r.usage.CUSeconds + pendingCU) * microPerCU / (s.windowHrs * 3600)))
 	usedMem := int64(math.Floor((r.usage.MBHours + pendingMB) / s.windowHrs))
 	microCU = cpuMicroOf(r.entitlement.CPU) - usedMicro

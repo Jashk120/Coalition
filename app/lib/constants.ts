@@ -100,8 +100,23 @@ export const SEED_META: readonly SeedMeta[] = [
   },
 ];
 
-/** Held-out resale buyer: never commits, stays outside the funding loop. */
+/** Held-out resale buyer: agent-5, never commits, stays outside the funding loop.
+ * Keep the OUTSIDE_BUYER export name; do NOT add this wallet to
+ * CIRCLE_WALLET_IDS or SEED_META — the buyer pays via its own
+ * CIRCLE_BUYER_WALLET_ID Circle wallet through the x402 Gateway flow. */
 export const OUTSIDE_BUYER = {
-  wallet: "0x71846352cc198d7f3bfeb677f8631eb84d311329",
-  ensName: "buyer.agentpool.eth",
+  wallet: "0x2e07588b8180c8235c2a1be7ffa2639545630dd1",
+  ensName: "agent5.agentpool.eth",
 } as const;
+
+/** x402 resale rail: Arc testnet in CAIP-2 form for payment requirements. */
+export const RESALE_NETWORK = "eip155:5042002";
+
+/** USDC token on Arc testnet (x402 asset + Gateway deposit token). */
+export const RESALE_USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+
+/** Circle Gateway facilitator for x402 verify/settle (testnet). */
+export const RESALE_FACILITATOR_URL = "https://gateway-api-testnet.circle.com";
+
+/** Circle GatewayWallet contract on testnet (x402 verifyingContract + deposits). */
+export const RESALE_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";

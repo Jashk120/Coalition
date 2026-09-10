@@ -56,6 +56,12 @@ type Config struct {
 	RequireDocker   bool
 	AppAPIKey       string
 	AllowNoAppAuth  bool
+	// FacilitatorURL is reserved for a future settle-on-delivery flow. It is
+	// parsed and stored but has NO behavior attached: nothing dials it, and
+	// the multi-leg resale path must never add a Go-side verify/settle
+	// against it (the Gateway middleware settles inline; a Go-side call
+	// would double-charge or fail closed after payment).
+	FacilitatorURL  string
 }
 
 // WindowSeconds returns the compute window in seconds.
@@ -250,6 +256,20 @@ func loadFrom(lookup func(string) (string, bool)) (Config, error) {
 		}
 		cfg.PublicBaseURL = strings.TrimSuffix(baseRaw, "/")
 	}
+
+	// FACILITATOR_URL is reserved for future settle-on-delivery. It is parsed
+	// and stored only; no handler, poller, or verifier reads it, so it
+	// attaches NO behavior. Any http(s) URL parses (http included so
+	// httptest configs keep loading).
+	facRaw := strings.TrimSpace(get("FACILITATOR_URL", "https://gateway-api-testnet.circle.com"))
+	if facRaw == "" {
+		facRaw = "https://gateway-api-testnet.circle.com"
+	}
+	fu, err := url.ParseRequestURI(facRaw)
+	if err != nil || (fu.Scheme != "http" && fu.Scheme != "https") || fu.Host == "" {
+		return Config{}, fmt.Errorf("FACILITATOR_URL=%q: %w", facRaw, ErrInvalidValue)
+	}
+	cfg.FacilitatorURL = strings.TrimSuffix(facRaw, "/")
 
 	return cfg, nil
 }
