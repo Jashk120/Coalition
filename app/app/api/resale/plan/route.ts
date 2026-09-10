@@ -9,12 +9,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * POST /api/resale/plan {wallet, cu, mem} — relay to the orchestrator
- * POST /fill-plan with the exact same shapes both ways (mesh byte-for-byte
- * with the Go handler): req {wallet, cu, mem}, res
- * {sellers:[{wallet,mb,cuMicro,amountAtomic}], totalAtomic}. No auth, no
- * payment — planning is free; paying happens per leg on /api/resale/quota.
+ * POST /fill-plan and validate the atomic-settlement shape
+ * {outputs:[{account,amountAtomic}], totalAtomic, nonce, roundId,
+ * headroomMB, headroomCUMicro}. No auth, no payment — planning is free.
+ * The response echoes the requested mint dimensions as plan.want so
+ * POST /api/resale/buy can commit the exact slice that was previewed.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   let body: unknown;
@@ -22,6 +27,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     body = (await request.json()) as unknown;
   } catch {
     return NextResponse.json({ ok: false, error: "invalid JSON" }, { status: 400 });
+  }
+  let want: { readonly mem: number; readonly cuMicro: number } | null = null;
+  if (isRecord(body)) {
+    const mem = body["mem"];
+    const cu = body["cu"];
+    if (
+      typeof mem === "number" &&
+      Number.isInteger(mem) &&
+      mem >= 0 &&
+      typeof cu === "number" &&
+      Number.isFinite(cu) &&
+      cu >= 0 &&
+      (mem > 0 || cu > 0)
+    ) {
+      want = { mem, cuMicro: Math.round(cu * 1e6) };
+    }
   }
   let upstream: Response;
   try {
@@ -55,7 +76,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   try {
     const plan = parseFillPlan(payload);
-    return NextResponse.json({ ok: true, plan });
+    return NextResponse.json({
+      ok: true,
+      plan: want === null ? plan : { ...plan, want },
+    });
   } catch (error) {
     log("warn", "resale.plan.bad_shape", {
       route: "POST /api/resale/plan",

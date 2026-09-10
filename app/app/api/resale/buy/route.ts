@@ -1,34 +1,22 @@
 import { NextResponse } from "next/server";
 import { erc20Abi } from "viem";
-import { RESALE_NETWORK, RESALE_USDC_ADDRESS } from "@/lib/constants";
+import { RESALE_USDC_ADDRESS } from "@/lib/constants";
 import { arcPublicClient } from "@/lib/chain";
 import { log } from "@/lib/logger";
 import { orchestratorBaseUrl } from "@/lib/pool-state";
+import { createCircleClient, executeContractAndWait } from "@/lib/circle-fund";
 import {
-  createBuyerAccount,
-  createBuyerPayClient,
-  legToTransferLeg,
-  parseAutofundCapAtomic,
+  MULTICALL3_ADDRESS,
+  buildSettlementCalls,
   parseFillPlan,
-  payQuotaLeg,
+  parsePlanWant,
   readBuyerEnv,
-  topUpGateway,
-  type TransferQuotaLeg,
-  type TransferQuotaPayment,
 } from "@/lib/resale";
 
 export const dynamic = "force-dynamic";
-// Gateway verify+settle plus facilitator checks run per leg: allow a long
-// serverless window so a multi-leg plan never dies mid-flow.
+// One approve plus one aggregate execution, each polled to a terminal state:
+// allow a long serverless window so settlement never dies mid-flow.
 export const maxDuration = 300;
-
-// Capped one-shot Gateway auto-top-up (server-only
-// CIRCLE_BUYER_AUTOFUND_MAX, decimal USDC e.g. "10.00"; absent/empty/invalid
-// = OFF, buys fail exactly as before): when a leg fails ONLY with a
-// facilitator /insufficient_balance/i error, the route deposits
-// min(plan total + 1 USDC headroom, cap, wallet on-chain USDC) from the buyer
-// wallet into its OWN Gateway balance once per buy and retries that leg
-// once. No other error triggers it, never a second top-up per request.
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -44,19 +32,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * POST /api/resale/buy {plan} — agent-5 Gateway buyer flow. Takes a fill
- * plan (previewed via /api/resale/plan), pays each leg sequentially through
- * the per-seller 402 route from the buyer's own Circle wallet (BatchEvmScheme
- * over the Circle EIP-1193 signer — no local key anywhere), collects
- * [{seller, amountAtomic, settlementId}] proofs, then POSTs the orchestrator
- * /transfer-quota with the server-side app key. Returns the buyer slice plus
- * a hasToken flag — the token itself stays server-side in spirit: it is
- * returned once for the buyer to run with and never logged.
+ * POST /api/resale/buy {plan} — agent-5 atomic buyer flow. Takes a fill
+ * plan (previewed via /api/resale/plan, outputs shape with the echoed want),
+ * approves the plan total once for Multicall3 from the buyer's own Circle
+ * wallet, executes a single aggregate of USDC transferFrom calls paying each
+ * agent its exact fill-plan share, then commits buyer quota via the
+ * orchestrator /commit-mint against that one settlement transaction.
  *
- * Quota commit is atomic; funds settle per-leg inline and can strand on
- * later-leg failure — see manifest. Every partial-pay failure below returns
- * the paid-legs manifest [{seller, amountAtomic, settlementId}] so stranded
- * funds stay reconcilable.
+ * The aggregate is EVM-atomic: either every agent is paid or none is, so
+ * partial-payment states are unrepresentable and there is no paid-legs
+ * manifest. The execution txHash is the single settlement proof.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const env = readBuyerEnv();
@@ -92,150 +77,100 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 400 },
     );
   }
+  let want;
+  try {
+    want = parsePlanWant(
+      isRecord(body["plan"]) ? body["plan"]["want"] : undefined,
+    );
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, error: `plan carries no usable want: ${errorMessage(error)}` },
+      { status: 400 },
+    );
+  }
 
-  const account = createBuyerAccount({
-    apiKey: env.apiKey,
-    entitySecret: env.entitySecret,
-    buyerAddress: env.buyerAddress,
-  });
-  const { httpClient } = createBuyerPayClient(account);
-  const quotaUrl = `${new URL(request.url).origin}/api/resale/quota`;
-
-  // Sequential legs: each payment signature commits a fresh nonce + validity
-  // window, and a failed leg aborts before later money moves.
-  const legs: TransferQuotaLeg[] = [];
-  const payments: TransferQuotaPayment[] = [];
-  // Hard rule: at most one Gateway top-up per buy request (boolean, not a
-  // counter) — a retried leg that still fails returns leg_failed, never
-  // re-enters the top-up path.
-  let gatewayToppedUp = false;
-  const autofundCap = parseAutofundCapAtomic(
-    process.env["CIRCLE_BUYER_AUTOFUND_MAX"],
-  );
-  const AUTOFUND_HEADROOM_ATOMIC = 1000000n;
-  for (const leg of plan.sellers) {
-    const transferLeg = legToTransferLeg(leg);
-    const payArgs = {
-      quotaUrl,
-      seller: leg.wallet,
-      mb: leg.mb,
-      cu: transferLeg.cu,
-      httpClient,
-      preferredNetwork: RESALE_NETWORK,
-    };
-    let proof: { readonly amountAtomic: string; readonly settlementId: string };
-    try {
-      proof = await payQuotaLeg(payArgs);
-    } catch (error) {
-      const firstError = errorMessage(error);
-      let recovered: {
-        readonly amountAtomic: string;
-        readonly settlementId: string;
-      } | null = null;
-      let finalError = firstError;
-      if (
-        !gatewayToppedUp &&
-        autofundCap !== null &&
-        /insufficient_balance/i.test(firstError)
-      ) {
-        gatewayToppedUp = true;
-        let walletBalance: bigint | null = null;
-        try {
-          walletBalance = await arcPublicClient().readContract({
-            address: RESALE_USDC_ADDRESS,
-            abi: erc20Abi,
-            functionName: "balanceOf",
-            args: [env.buyerAddress],
-          });
-        } catch (readError) {
-          log("warn", "resale.buy.autofund_balance_failed", {
-            route: "POST /api/resale/buy",
-            error: errorMessage(readError),
-          });
-        }
-        const required = BigInt(plan.totalAtomic) + AUTOFUND_HEADROOM_ATOMIC;
-        if (walletBalance !== null && walletBalance >= required) {
-          const candidates = [required, autofundCap, walletBalance];
-          let topUp = candidates[0] ?? 0n;
-          for (const candidate of candidates) {
-            if (candidate < topUp) topUp = candidate;
-          }
-          if (topUp > 0n) {
-            const topped = await topUpGateway({
-              apiKey: env.apiKey,
-              entitySecret: env.entitySecret,
-              buyerWalletId: env.buyerWalletId,
-              amountAtomic: topUp.toString(),
-            });
-            if (!topped.ok) {
-              log("warn", "resale.buy.autofund_failed", {
-                route: "POST /api/resale/buy",
-                seller: leg.wallet,
-                error: topped.error,
-              });
-            } else {
-              log("info", "resale.buy.autofunded", {
-                route: "POST /api/resale/buy",
-                seller: leg.wallet,
-              });
-              try {
-                recovered = await payQuotaLeg(payArgs);
-              } catch (retryError) {
-                finalError = errorMessage(retryError);
-              }
-            }
-          }
-        }
-      }
-      if (recovered === null) {
-        log("warn", "resale.buy.leg_failed", {
-          route: "POST /api/resale/buy",
-          seller: leg.wallet,
-          legsPaid: payments.length,
-          legsTotal: plan.sellers.length,
-          paidLegs: JSON.stringify(payments),
-          error: finalError,
-        });
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `leg ${legs.length + 1}/${String(plan.sellers.length)} (${leg.wallet}) unpaid: ${finalError}`,
-            legsPaid: payments.length,
-            paidLegs: payments,
-          },
-          { status: 502 },
-        );
-      }
-      proof = recovered;
-    }
-    // Source of truth is what the 402 route actually settled, not the
-    // previewed plan: a quote that moved between plan and pay reprices the
-    // leg, and the Go side checks paid >= cost at transfer time.
-    if (proof.amountAtomic !== leg.amountAtomic) {
-      log("info", "resale.buy.repriced", {
-        route: "POST /api/resale/buy",
-        seller: leg.wallet,
-        planned: leg.amountAtomic,
-        paid: proof.amountAtomic,
-      });
-    }
-    legs.push(transferLeg);
-    payments.push({
-      seller: leg.wallet,
-      amountAtomic: proof.amountAtomic,
-      settlementId: proof.settlementId,
+  const total = BigInt(plan.totalAtomic);
+  try {
+    const balance = await arcPublicClient().readContract({
+      address: RESALE_USDC_ADDRESS,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [env.buyerAddress],
     });
+    if (balance < total) {
+      return NextResponse.json(
+        { ok: false, error: "buyer USDC balance below plan total" },
+        { status: 502 },
+      );
+    }
+  } catch (readError) {
+    log("warn", "resale.buy.balance_failed", {
+      route: "POST /api/resale/buy",
+      error: errorMessage(readError),
+    });
+  }
+
+  const client = createCircleClient(env.apiKey, env.entitySecret);
+  const approve = await executeContractAndWait(client, {
+    walletId: env.buyerWalletId,
+    contractAddress: RESALE_USDC_ADDRESS,
+    abiFunctionSignature: "approve(address,uint256)",
+    abiParameters: [MULTICALL3_ADDRESS, plan.totalAtomic],
+  });
+  if (!approve.ok) {
+    log("warn", "resale.buy.approve_failed", {
+      route: "POST /api/resale/buy",
+      error: approve.error,
+    });
+    return NextResponse.json(
+      { ok: false, error: `approve failed: ${approve.error}` },
+      { status: 502 },
+    );
+  }
+
+  const calls = buildSettlementCalls({
+    buyer: env.buyerAddress,
+    outputs: plan.outputs,
+  });
+  // Circle's abiParameters entry is untyped at runtime, so the tuple array
+  // encodes against "aggregate((address,bytes)[])" as one nested parameter.
+  const aggregate = await executeContractAndWait(client, {
+    walletId: env.buyerWalletId,
+    contractAddress: MULTICALL3_ADDRESS,
+    abiFunctionSignature: "aggregate((address,bytes)[])",
+    abiParameters: [[...calls.map(([target, callData]) => [target, callData])]] as unknown as readonly string[],
+  });
+  if (!aggregate.ok) {
+    log("warn", "resale.buy.settle_failed", {
+      route: "POST /api/resale/buy",
+      error: aggregate.error,
+    });
+    return NextResponse.json(
+      { ok: false, error: `settlement failed: ${aggregate.error}` },
+      { status: 502 },
+    );
   }
 
   let upstream: Response;
   try {
-    upstream = await fetch(`${orchestratorBaseUrl()}/transfer-quota`, {
+    upstream = await fetch(`${orchestratorBaseUrl()}/commit-mint`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-app-key": key,
       },
-      body: JSON.stringify({ to: env.buyerAddress, legs, payments }),
+      body: JSON.stringify({
+        to: env.buyerAddress,
+        mb: want.mem,
+        cuMicro: want.cuMicro,
+        settlementTxHash: aggregate.txHash,
+        nonce: plan.nonce,
+        roundId: plan.roundId,
+        outputs: plan.outputs.map((output) => ({
+          account: output.account,
+          amountAtomic: output.amountAtomic,
+        })),
+      }),
       cache: "no-store",
       signal: AbortSignal.timeout(60_000),
     });
@@ -245,7 +180,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       error: errorMessage(error),
     });
     return NextResponse.json(
-      { ok: false, error: `transfer-quota unreachable: ${errorMessage(error)}` },
+      { ok: false, error: `commit-mint unreachable: ${errorMessage(error)}` },
       { status: 502 },
     );
   }
@@ -254,15 +189,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     const detail =
       isRecord(payload) && typeof payload["error"] === "string"
         ? payload["error"]
-        : `transfer-quota returned ${String(upstream.status)}`;
-    log("warn", "resale.buy.transfer_failed", {
+        : `commit-mint returned ${String(upstream.status)}`;
+    log("warn", "resale.buy.commit_failed", {
       route: "POST /api/resale/buy",
       status: upstream.status,
-      legsPaid: payments.length,
-      paidLegs: JSON.stringify(payments),
     });
     return NextResponse.json(
-      { ok: false, error: String(detail), legsPaid: payments.length, paidLegs: payments },
+      { ok: false, error: String(detail) },
       { status: 502 },
     );
   }
@@ -306,13 +239,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   log("info", "resale.buy.complete", {
     route: "POST /api/resale/buy",
-    legs: legs.length,
+    outputs: plan.outputs.length,
     hasToken: toToken !== null,
   });
   return NextResponse.json({
     ok: true,
     buyer: env.buyerAddress,
-    legsPaid: payments.length,
+    legsPaid: plan.outputs.length,
     totalAtomic: plan.totalAtomic,
     to,
     ...(toToken === null ? {} : { toToken }),

@@ -57,16 +57,19 @@ type MarketState =
   | { readonly status: "ready"; readonly entries: readonly MarketEntry[] }
   | { readonly status: "error"; readonly message: string };
 
-type PlanLeg = {
-  readonly wallet: string;
-  readonly mb: number;
-  readonly cuMicro: number;
+type PlanOutput = {
+  readonly account: string;
   readonly amountAtomic: string;
 };
 
 type PlanView = {
-  readonly sellers: readonly PlanLeg[];
+  readonly outputs: readonly PlanOutput[];
   readonly totalAtomic: string;
+  readonly nonce: string;
+  readonly roundId: string;
+  readonly headroomMB: number;
+  readonly headroomCUMicro: number;
+  readonly want?: { readonly mem: number; readonly cuMicro: number };
 };
 
 type PlanState =
@@ -133,6 +136,18 @@ function hasSpareAmount(value: string): boolean {
     return BigInt(value) > 0n;
   } catch {
     return value !== "" && value !== "0";
+  }
+}
+
+function sharePercent(amountAtomic: string, totalAtomic: string): string {
+  try {
+    const amount = BigInt(amountAtomic);
+    const total = BigInt(totalAtomic);
+    if (total === 0n) return "0.00";
+    const basisPoints = Number((amount * 10000n) / total) / 100;
+    return basisPoints.toFixed(2);
+  } catch {
+    return "—";
   }
 }
 
@@ -675,49 +690,20 @@ export default function DashboardPage() {
       <section className="card" aria-label="Resale market">
         <h2>Resale market</h2>
         <p className="fill-label">
-          Spare per agent at cost basis. Agent-5 (outside buyer) previews a
-          fill plan, then pays each leg from its own Circle wallet via the
-          x402 Gateway flow — no local key. After the buy the buyer lands in
+          Unallocated pool headroom, split skew-weighted across the 4 agents.
+          Agent-5 (outside buyer) previews a fill plan, then pays every share
+          in one atomic settlement from its own Circle wallet — either all
+          agents are paid or none are. After the buy the buyer lands in
           Live Compute Usage like the other agents.
         </p>
-        {market.status === "ready" ? (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Seller</th>
-                  <th>Spare MB / CU</th>
-                  <th>Rate (atomic)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {market.entries.map((entry) => (
-                  <tr key={entry.wallet}>
-                    <td className="mono">{displayAgent(entry.wallet)}</td>
-                    <td>
-                      {entry.empty === true ? (
-                        <span className="state">
-                          No quota — {entry.reason ?? "not allocated"}
-                        </span>
-                      ) : (
-                        <span className="fill-label">
-                          {entry.availableMB} MB / {entry.availableCU} CU-micro
-                        </span>
-                      )}
-                    </td>
-                    <td className="mono">
-                      {entry.empty === true
-                        ? "—"
-                        : `${entry.ratePerMBAtomic}/MB + ${entry.ratePerCUAtomic}/CU`}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {market.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Market unavailable: {market.message}
           </div>
         ) : null}
         <p className="fill-label">
-          Want mem (MB) + CU, preview the fill plan, then pay it leg by leg.
+          Want mem (MB) + CU, preview the fill plan, then pay it in one
+          settlement.
         </p>
         <label className="fill-label">
           mem MB{" "}
@@ -751,7 +737,7 @@ export default function DashboardPage() {
           onClick={() => void payPlan()}
           disabled={plan.status !== "ready" || buy.status === "paying"}
         >
-          {buy.status === "paying" ? "Paying…" : "Pay via Gateway"}
+          {buy.status === "paying" ? "Paying…" : "Pay plan"}
         </button>
         {plan.status === "error" ? (
           <div className="state state-error" role="alert">
@@ -760,29 +746,34 @@ export default function DashboardPage() {
         ) : null}
         {plan.status === "ready" ? (
           <div className="table-wrap">
+            <div className="fill-label">
+              Pool headroom {plan.plan.headroomMB} MB /{" "}
+              {plan.plan.headroomCUMicro} CU-micro · round {plan.plan.roundId}
+            </div>
             <table>
               <thead>
                 <tr>
-                  <th>Seller</th>
-                  <th>MB</th>
-                  <th>CU-micro</th>
-                  <th>Cost (USDC)</th>
+                  <th>Agent</th>
+                  <th>Share</th>
+                  <th>Amount (USDC)</th>
                 </tr>
               </thead>
               <tbody>
-                {plan.plan.sellers.map((leg) => (
-                  <tr key={leg.wallet}>
-                    <td className="mono">{displayAgent(leg.wallet)}</td>
-                    <td className="mono">{leg.mb}</td>
-                    <td className="mono">{leg.cuMicro}</td>
-                    <td className="mono">{formatUsdc(leg.amountAtomic)}</td>
+                {plan.plan.outputs.map((output) => (
+                  <tr key={output.account}>
+                    <td className="mono">{displayAgent(output.account)}</td>
+                    <td className="mono">
+                      {sharePercent(output.amountAtomic, plan.plan.totalAtomic)}
+                      %
+                    </td>
+                    <td className="mono">{formatUsdc(output.amountAtomic)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <div className="fill-label">
               Total {formatUsdc(plan.plan.totalAtomic)} USDC across{" "}
-              {plan.plan.sellers.length} leg(s)
+              {plan.plan.outputs.length} agent(s)
             </div>
           </div>
         ) : null}
@@ -793,7 +784,7 @@ export default function DashboardPage() {
         ) : null}
         {buy.status === "ready" ? (
           <div className="state">
-            Bought {buy.result.legsPaid} leg(s) for{" "}
+            Bought {buy.result.legsPaid} payout(s) for{" "}
             {formatUsdc(buy.result.totalAtomic)} USDC — buyer{" "}
             <span className="mono">{displayAgent(buy.result.buyer)}</span>{" "}
             holds quota (see Live Compute Usage).
