@@ -10,13 +10,15 @@ import (
 )
 
 type fillPlanOut struct {
-	Sellers []struct {
-		Wallet       string `json:"wallet"`
-		MB           int64  `json:"mb"`
-		CUMicro      int64  `json:"cuMicro"`
+	Outputs []struct {
+		Account      string `json:"account"`
 		AmountAtomic string `json:"amountAtomic"`
-	} `json:"sellers"`
-	TotalAtomic string `json:"totalAtomic"`
+	} `json:"outputs"`
+	TotalAtomic     string `json:"totalAtomic"`
+	Nonce           string `json:"nonce"`
+	RoundId         string `json:"roundId"`
+	HeadroomMB      int64  `json:"headroomMB"`
+	HeadroomCUMicro int64  `json:"headroomCUMicro"`
 }
 
 func postFillPlan(t *testing.T, f fixture, wallet string, cu float64, mem int64) (int, fillPlanOut) {
@@ -32,100 +34,141 @@ func postFillPlan(t *testing.T, f fixture, wallet string, cu float64, mem int64)
 	return rec.Code, out
 }
 
-func multilegBody(buyer string, plan fillPlanOut, ids []string) string {
-	var sb strings.Builder
-	sb.WriteString(`{"to":` + fmt.Sprintf("%q", buyer) + `,"legs":[`)
-	for i, leg := range plan.Sellers {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		fmt.Fprintf(&sb, `{"seller":%q,"mb":%d,"cu":%v}`, leg.Wallet, leg.MB, float64(leg.CUMicro)/1e6)
+func fillPlanFixture(t *testing.T) fixture {
+	t.Helper()
+	f := settledV2Fixture(t, 7)
+	for _, w := range []string{testWalletA, testWalletB, testWalletC, testWalletD} {
+		allocate(t, f, w, 0.2, 800)
 	}
-	sb.WriteString(`],"payments":[`)
-	for i, leg := range plan.Sellers {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		fmt.Fprintf(&sb, `{"seller":%q,"amountAtomic":%q,"settlementId":%q}`, leg.Wallet, leg.AmountAtomic, ids[i])
-	}
-	sb.WriteString(`]}`)
-	return sb.String()
+	stub := f.srv.verifier.(*stubVerifier)
+	stub.committed[testWalletA] = big.NewInt(2000000)
+	stub.committed[testWalletB] = big.NewInt(1000000)
+	stub.committed[testWalletC] = big.NewInt(1000000)
+	stub.committed[testWalletD] = big.NewInt(1000000)
+	return f
 }
 
-func Test_X402_fill_commit_happy(t *testing.T) {
-	f := newFixture()
-	allocate(t, f, testWalletA, 0.2, 800)
-	allocate(t, f, testWalletB, 0.2, 800)
+func planAmounts(t *testing.T, plan fillPlanOut) map[string]*big.Int {
+	t.Helper()
+	got := make(map[string]*big.Int, len(plan.Outputs))
+	for _, o := range plan.Outputs {
+		v, ok := new(big.Int).SetString(o.AmountAtomic, 10)
+		if !ok || v.Sign() < 0 {
+			t.Fatalf("account %s amountAtomic = %q, want uint decimal string", o.Account, o.AmountAtomic)
+		}
+		if _, dup := got[o.Account]; dup {
+			t.Fatalf("duplicate output account %s", o.Account)
+		}
+		got[o.Account] = v
+	}
+	return got
+}
 
-	code, plan := postFillPlan(t, f, testWalletF, 0.1, 1000)
+func Test_X402_fill_plan_happy(t *testing.T) {
+	f := fillPlanFixture(t)
+
+	code, plan := postFillPlan(t, f, testWalletF, 0.05, 100)
 	if code != http.StatusOK {
 		t.Fatalf("fill-plan: status=%d", code)
 	}
-	if len(plan.Sellers) != 2 {
-		t.Fatalf("want 2 legs, got %+v", plan)
+	if len(plan.Outputs) != 4 {
+		t.Fatalf("want 4 outputs, got %+v", plan.Outputs)
 	}
-	if plan.Sellers[0].Wallet != testWalletA || plan.Sellers[1].Wallet != testWalletB {
-		t.Fatalf("legs must be wallet-sorted on tied MB-hours, got %+v", plan.Sellers)
-	}
-	if plan.TotalAtomic == "" || plan.TotalAtomic == "0" {
-		t.Fatalf("totalAtomic = %q", plan.TotalAtomic)
-	}
-	var sum = big.NewInt(0)
-	for _, leg := range plan.Sellers {
-		v, ok := new(big.Int).SetString(leg.AmountAtomic, 10)
-		if !ok || v.Sign() <= 0 {
-			t.Fatalf("leg amountAtomic = %q", leg.AmountAtomic)
+	for i := 1; i < len(plan.Outputs); i++ {
+		if plan.Outputs[i-1].Account >= plan.Outputs[i].Account {
+			t.Fatalf("outputs must be wallet-asc, got %+v", plan.Outputs)
 		}
+	}
+	for _, o := range plan.Outputs {
+		if o.Account == testWalletF {
+			t.Fatalf("buyer must be excluded, got %+v", plan.Outputs)
+		}
+	}
+	if plan.TotalAtomic != "372000" {
+		t.Fatalf("totalAtomic = %q, want 372000 (100*1220 + floor(0.05*5000000))", plan.TotalAtomic)
+	}
+	got := planAmounts(t, plan)
+	sum := big.NewInt(0)
+	for _, v := range got {
 		sum.Add(sum, v)
 	}
 	if sum.String() != plan.TotalAtomic {
-		t.Fatalf("totalAtomic = %q, sum of legs = %q", plan.TotalAtomic, sum)
+		t.Fatalf("outputs sum = %q, totalAtomic = %q", sum, plan.TotalAtomic)
 	}
-
-	// No facilitator HTTP exists on this path: operator-attested settlement
-	// ids plus spend-once plus the atomic commit are the proof, so the
-	// commit must succeed with no outbound verify of any kind.
-	body := multilegBody(testWalletF, plan, []string{"settle-aaa", "settle-bbb"})
-	rec := doAppKey(f, http.MethodPost, "/transfer-quota", body)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("multileg commit: status=%d body=%s", rec.Code, rec.Body.String())
+	if got[testWalletA].Cmp(got[testWalletB]) <= 0 ||
+		got[testWalletA].Cmp(got[testWalletC]) <= 0 ||
+		got[testWalletA].Cmp(got[testWalletD]) <= 0 {
+		t.Fatalf("most-skewed agent A must get most, got %+v", plan.Outputs)
 	}
-	var out struct {
-		Sellers []struct {
-			Wallet string  `json:"wallet"`
-			MemMB  int64   `json:"memMB"`
-			CPU    float64 `json:"cpu"`
-		} `json:"sellers"`
-		To struct {
-			Wallet string  `json:"wallet"`
-			MemMB  int64   `json:"memMB"`
-			CPU    float64 `json:"cpu"`
-		} `json:"to"`
-		ToToken string `json:"toToken"`
+	if plan.RoundId != "7" {
+		t.Fatalf("roundId = %q, want 7", plan.RoundId)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode: %v", err)
+	if plan.HeadroomMB != 896 || plan.HeadroomCUMicro != 200000 {
+		t.Fatalf("headroom = %dMB %dCUMicro, want 896MB 200000CUMicro", plan.HeadroomMB, plan.HeadroomCUMicro)
 	}
-	if out.To.MemMB != 1000 || out.To.CPU != 0.1 {
-		t.Fatalf("buyer slice wrong: %+v", out.To)
+	if len(plan.Nonce) != 64 {
+		t.Fatalf("nonce = %q, want 32 bytes hex", plan.Nonce)
 	}
-	if out.ToToken == "" {
-		t.Fatal("new buyer must be minted a token")
-	}
-	entA, _ := f.led.Entitlement(mustWallet(t, testWalletA))
-	if entA.MemMB != 1 || entA.CPU != 0.1 {
-		t.Fatalf("seller A after commit: %+v", entA)
-	}
-	f.tok[testWalletF] = out.ToToken
-	if rec := doAuthed(f, http.MethodPost, "/run",
-		`{"wallet":"`+testWalletF+`","cmd":["echo","hi"]}`, testWalletF); rec.Code != http.StatusOK {
-		t.Fatalf("buyer run with minted token: status=%d body=%s", rec.Code, rec.Body.String())
+	if _, ok := new(big.Int).SetString(plan.Nonce, 16); !ok {
+		t.Fatalf("nonce = %q, want hex", plan.Nonce)
 	}
 }
 
-func Test_X402_fill_insufficient_spare(t *testing.T) {
-	f := newFixture()
-	allocate(t, f, testWalletA, 0.2, 800)
+func Test_X402_fill_plan_dust_exact(t *testing.T) {
+	f := fillPlanFixture(t)
+	stub := f.srv.verifier.(*stubVerifier)
+	stub.committed[testWalletA] = big.NewInt(3000000)
+
+	code, plan := postFillPlan(t, f, testWalletF, 0.05, 101)
+	if code != http.StatusOK {
+		t.Fatalf("fill-plan: status=%d", code)
+	}
+	if plan.TotalAtomic != "373220" {
+		t.Fatalf("totalAtomic = %q, want 373220", plan.TotalAtomic)
+	}
+	got := planAmounts(t, plan)
+	sum := big.NewInt(0)
+	for _, v := range got {
+		sum.Add(sum, v)
+	}
+	if sum.String() != plan.TotalAtomic {
+		t.Fatalf("outputs sum = %q, totalAtomic = %q: must match exactly", sum, plan.TotalAtomic)
+	}
+	if got[testWalletC].String() != "62204" {
+		t.Fatalf("first wallet-asc output C = %q, want 62204 (floor 62203 + 1 dust unit)", got[testWalletC])
+	}
+	if got[testWalletD].String() != "62203" || got[testWalletB].String() != "62203" {
+		t.Fatalf("dust must go wallet-asc first, got %+v", plan.Outputs)
+	}
+}
+
+func Test_X402_fill_plan_buyer_agent_excluded(t *testing.T) {
+	f := fillPlanFixture(t)
+
+	code, plan := postFillPlan(t, f, testWalletA, 0.05, 100)
+	if code != http.StatusOK {
+		t.Fatalf("fill-plan: status=%d", code)
+	}
+	if len(plan.Outputs) != 3 {
+		t.Fatalf("want 3 outputs with buyer excluded, got %+v", plan.Outputs)
+	}
+	for _, o := range plan.Outputs {
+		if o.Account == testWalletA {
+			t.Fatalf("buyer-agent must be excluded, got %+v", plan.Outputs)
+		}
+	}
+	got := planAmounts(t, plan)
+	sum := big.NewInt(0)
+	for _, v := range got {
+		sum.Add(sum, v)
+	}
+	if sum.String() != plan.TotalAtomic {
+		t.Fatalf("outputs sum = %q, totalAtomic = %q", sum, plan.TotalAtomic)
+	}
+}
+
+func Test_X402_fill_plan_insufficient_spare(t *testing.T) {
+	f := fillPlanFixture(t)
 	if code, _ := postFillPlan(t, f, testWalletF, 0.5, 99999); code != http.StatusConflict {
 		t.Fatalf("oversized want: status=%d, want 409", code)
 	}
@@ -135,24 +178,83 @@ func Test_X402_fill_insufficient_spare(t *testing.T) {
 	}
 }
 
+func Test_X402_fill_plan_validation(t *testing.T) {
+	f := fillPlanFixture(t)
+	bodies := []string{
+		fmt.Sprintf(`{"wallet":%q,"cu":0,"mem":0}`, testWalletF),
+		fmt.Sprintf(`{"wallet":%q,"cu":-0.1,"mem":100}`, testWalletF),
+		fmt.Sprintf(`{"wallet":%q,"cu":0.1,"mem":-5}`, testWalletF),
+		fmt.Sprintf(`{"wallet":%q,"cu":NaN,"mem":100}`, testWalletF),
+		fmt.Sprintf(`{"wallet":%q,"cu":Inf,"mem":100}`, testWalletF),
+		fmt.Sprintf(`{"wallet":"nope","cu":0.1,"mem":100}`),
+		`{"wallet":` + testWalletF + `,"cu":0.1,"mem":100,"x":1}`,
+	}
+	for _, body := range bodies {
+		rec := doRequest(f, http.MethodPost, "/fill-plan", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: status=%d, want 400", body, rec.Code)
+		}
+		if got := codeOf(t, rec.Body.Bytes()); got != "bad_request" {
+			t.Fatalf("body %s: code = %q, want bad_request", body, got)
+		}
+	}
+}
+
+func Test_X402_fill_plan_nonce_unique(t *testing.T) {
+	f := fillPlanFixture(t)
+
+	_, first := postFillPlan(t, f, testWalletF, 0.05, 100)
+	_, second := postFillPlan(t, f, testWalletF, 0.05, 100)
+	if first.Nonce == "" || second.Nonce == "" {
+		t.Fatal("both plans must carry a nonce")
+	}
+	if first.Nonce == second.Nonce {
+		t.Fatalf("nonces must differ, got %q twice", first.Nonce)
+	}
+}
+
+func Test_X402_fill_plan_chain_down_fail_closed(t *testing.T) {
+	f := fillPlanFixture(t)
+	f.srv.verifier.(*stubVerifier).committedErr = errStubNodeDown
+
+	rec := doRequest(f, http.MethodPost, "/fill-plan", fmt.Sprintf(`{"wallet":%q,"cu":0.05,"mem":100}`, testWalletF))
+	if rec.Code == http.StatusOK {
+		t.Fatalf("chain down must deny, got 200 body=%s", rec.Body.String())
+	}
+	if got := codeOf(t, rec.Body.Bytes()); got != "chain_unreadable" {
+		t.Fatalf("code = %q, want chain_unreadable", got)
+	}
+}
+
+func multilegBody(buyer string, sellers []string, mbs []int64, cus []float64, amounts []string, ids []string) string {
+	var sb strings.Builder
+	sb.WriteString(`{"to":` + fmt.Sprintf("%q", buyer) + `,"legs":[`)
+	for i := range sellers {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, `{"seller":%q,"mb":%d,"cu":%v}`, sellers[i], mbs[i], cus[i])
+	}
+	sb.WriteString(`],"payments":[`)
+	for i := range sellers {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, `{"seller":%q,"amountAtomic":%q,"settlementId":%q}`, sellers[i], amounts[i], ids[i])
+	}
+	sb.WriteString(`]}`)
+	return sb.String()
+}
+
 func Test_X402_multileg_underpay(t *testing.T) {
 	f := newFixture()
 	allocate(t, f, testWalletA, 0.2, 800)
 	allocate(t, f, testWalletB, 0.2, 800)
 
-	_, plan := postFillPlan(t, f, testWalletF, 0.1, 1000)
-	body := multilegBody(testWalletF, plan, []string{"settle-aaa", "settle-bbb"})
-	var decoded struct {
-		To       string           `json:"to"`
-		Legs     []map[string]any `json:"legs"`
-		Payments []map[string]any `json:"payments"`
-	}
-	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	decoded.Payments[0]["amountAtomic"] = "1"
-	raw, _ := json.Marshal(decoded)
-	rec := doAppKey(f, http.MethodPost, "/transfer-quota", string(raw))
+	body := multilegBody(testWalletF,
+		[]string{testWalletA, testWalletB}, []int64{400, 400}, []float64{0.1, 0.1},
+		[]string{"999999999999", "1"}, []string{"settle-aaa", "settle-bbb"})
+	rec := doAppKey(f, http.MethodPost, "/transfer-quota", body)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("underpay: status=%d body=%s, want 402", rec.Code, rec.Body.String())
 	}
@@ -169,8 +271,9 @@ func Test_X402_multileg_duplicate_replay(t *testing.T) {
 	allocate(t, f, testWalletA, 0.2, 800)
 	allocate(t, f, testWalletB, 0.2, 800)
 
-	_, plan := postFillPlan(t, f, testWalletF, 0.1, 1000)
-	body := multilegBody(testWalletF, plan, []string{"settle-aaa", "settle-bbb"})
+	body := multilegBody(testWalletF,
+		[]string{testWalletA, testWalletB}, []int64{400, 400}, []float64{0.1, 0.1},
+		[]string{"999999999999", "999999999999"}, []string{"settle-aaa", "settle-bbb"})
 	if rec := doAppKey(f, http.MethodPost, "/transfer-quota", body); rec.Code != http.StatusOK {
 		t.Fatalf("first commit: status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -188,19 +291,10 @@ func Test_X402_multileg_one_bad_leg_atomic(t *testing.T) {
 	allocate(t, f, testWalletA, 0.2, 800)
 	allocate(t, f, testWalletB, 0.2, 800)
 
-	_, plan := postFillPlan(t, f, testWalletF, 0.1, 1000)
-	raw, _ := json.Marshal(map[string]any{
-		"to": testWalletF,
-		"legs": []map[string]any{
-			{"seller": plan.Sellers[0].Wallet, "mb": plan.Sellers[0].MB, "cu": float64(plan.Sellers[0].CUMicro) / 1e6},
-			{"seller": plan.Sellers[1].Wallet, "mb": 7999, "cu": 0},
-		},
-		"payments": []map[string]any{
-			{"seller": plan.Sellers[0].Wallet, "amountAtomic": plan.Sellers[0].AmountAtomic, "settlementId": "settle-aaa"},
-			{"seller": plan.Sellers[1].Wallet, "amountAtomic": "999999999999", "settlementId": "settle-bbb"},
-		},
-	})
-	rec := doAppKey(f, http.MethodPost, "/transfer-quota", string(raw))
+	body := multilegBody(testWalletF,
+		[]string{testWalletA, testWalletB}, []int64{400, 7999}, []float64{0.1, 0},
+		[]string{"999999999999", "999999999999"}, []string{"settle-aaa", "settle-bbb"})
+	rec := doAppKey(f, http.MethodPost, "/transfer-quota", body)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("bad leg: status=%d body=%s, want 409", rec.Code, rec.Body.String())
 	}
@@ -231,8 +325,9 @@ func Test_X402_multileg_wrong_auth_tier(t *testing.T) {
 	allocate(t, f, testWalletA, 0.2, 800)
 	allocate(t, f, testWalletB, 0.2, 800)
 
-	_, plan := postFillPlan(t, f, testWalletF, 0.1, 1000)
-	body := multilegBody(testWalletF, plan, []string{"settle-aaa", "settle-bbb"})
+	body := multilegBody(testWalletF,
+		[]string{testWalletA, testWalletB}, []int64{400, 400}, []float64{0.1, 0.1},
+		[]string{"999999999999", "999999999999"}, []string{"settle-aaa", "settle-bbb"})
 
 	rec := doAuthed(f, http.MethodPost, "/transfer-quota", body, testWalletA)
 	if rec.Code != http.StatusUnauthorized {
@@ -258,11 +353,9 @@ func Test_X402_multileg_max_agents(t *testing.T) {
 		allocate(t, f, w, 0.2, 800)
 	}
 
-	if code, _ := postFillPlan(t, f, testWalletF, 0.01, 10); code != http.StatusOK {
-		t.Fatalf("fill-plan for 6th wallet: status=%d, want 200", code)
-	}
-	_, plan := postFillPlan(t, f, testWalletF, 0.01, 10)
-	body := multilegBody(testWalletF, plan, []string{"settle-cap-1", "settle-cap-2"})
+	body := multilegBody(testWalletF,
+		[]string{testWalletA, testWalletB}, []int64{10, 10}, []float64{0.01, 0.01},
+		[]string{"999999999999", "999999999999"}, []string{"settle-cap-1", "settle-cap-2"})
 	rec := doAppKey(f, http.MethodPost, "/transfer-quota", body)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("6th agent via multileg: status=%d body=%s, want 409", rec.Code, rec.Body.String())
@@ -276,16 +369,13 @@ func Test_X402_multileg_operator_attested_no_verify(t *testing.T) {
 	f := newFixture()
 	allocate(t, f, testWalletA, 0.2, 800)
 
-	_, plan := postFillPlan(t, f, testWalletF, 0.01, 10)
-	// Arbitrary operator-attested ids are accepted without any facilitator
-	// HTTP: cost check + spend-once + atomic commit are the whole proof.
-	body := multilegBody(testWalletF, plan, []string{"opaque-id-no-verify"})
+	body := multilegBody(testWalletF,
+		[]string{testWalletA}, []int64{10}, []float64{0.01},
+		[]string{"999999999999"}, []string{"opaque-id-no-verify"})
 	rec := doAppKey(f, http.MethodPost, "/transfer-quota", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("operator-attested commit: status=%d body=%s, want 200", rec.Code, rec.Body.String())
 	}
-	// The same ids now spend once: a replay is duplicate_payment even though
-	// nothing was ever verified externally.
 	rec = doAppKey(f, http.MethodPost, "/transfer-quota", body)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("replay: status=%d body=%s, want 409", rec.Code, rec.Body.String())

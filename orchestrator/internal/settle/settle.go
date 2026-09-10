@@ -576,6 +576,14 @@ func (l *Listener) setLastBlock(b string) {
 	l.lastBlock = b
 }
 
+// ReceiptLog is one event log inside a transaction receipt: the emitting
+// contract plus the raw topics and data needed to match ERC-20 Transfers.
+type ReceiptLog struct {
+	Address string
+	Topics  []string
+	Data    string
+}
+
 // Receipt is the subset of an eth_getTransactionReceipt answer the transfer
 // proof checks: who paid whom, how much, finality, and success status.
 type Receipt struct {
@@ -585,6 +593,7 @@ type Receipt struct {
 	BlockNumber *big.Int
 	Status      string
 	TxHash      string
+	Logs        []ReceiptLog
 }
 
 // Client is a minimal read-only JSON-RPC client for payment-proof checks.
@@ -660,12 +669,17 @@ func (c *Client) TransactionReceipt(ctx context.Context, txHash string) (*Receip
 		return nil, fmt.Errorf("tx %s: %w", txHash, ErrNoReceipt)
 	}
 	var r struct {
-		From        string  `json:"from"`
+		From        string `json:"from"`
 		To          *string `json:"to"`
-		Value       string  `json:"value"`
-		BlockNumber string  `json:"blockNumber"`
-		Status      string  `json:"status"`
-		TxHash      string  `json:"transactionHash"`
+		Value       string `json:"value"`
+		BlockNumber string `json:"blockNumber"`
+		Status      string `json:"status"`
+		TxHash      string `json:"transactionHash"`
+		Logs []struct {
+			Address string   `json:"address"`
+			Topics  []string `json:"topics"`
+			Data    string   `json:"data"`
+		} `json:"logs"`
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return nil, fmt.Errorf("decode eth_getTransactionReceipt: %w", err)
@@ -682,7 +696,11 @@ func (c *Client) TransactionReceipt(ctx context.Context, txHash string) (*Receip
 	if err != nil {
 		return nil, fmt.Errorf("decode receipt blockNumber: %w", err)
 	}
-	return &Receipt{From: r.From, To: to, Value: val, BlockNumber: blk, Status: r.Status, TxHash: r.TxHash}, nil
+	logs := make([]ReceiptLog, 0, len(r.Logs))
+	for _, lg := range r.Logs {
+		logs = append(logs, ReceiptLog{Address: lg.Address, Topics: lg.Topics, Data: lg.Data})
+	}
+	return &Receipt{From: r.From, To: to, Value: val, BlockNumber: blk, Status: r.Status, TxHash: r.TxHash, Logs: logs}, nil
 }
 
 func nonEmptyHex(s string) string {

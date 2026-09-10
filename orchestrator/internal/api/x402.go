@@ -1,16 +1,23 @@
 package api
 
 import (
+	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/big"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Jashk120/Coalition/orchestrator/internal/domain"
+	"github.com/Jashk120/Coalition/orchestrator/internal/money"
 	"github.com/Jashk120/Coalition/orchestrator/internal/store"
 )
 
@@ -61,16 +68,22 @@ type fillPlanRequest struct {
 	Mem    int64   `json:"mem"`
 }
 
-type fillPlanLeg struct {
-	Wallet       string `json:"wallet"`
-	MB           int64  `json:"mb"`
-	CUMicro      int64  `json:"cuMicro"`
+type fillPlanOutput struct {
+	Account      string `json:"account"`
 	AmountAtomic string `json:"amountAtomic"`
 }
 
 type fillPlanResponse struct {
-	Sellers     []fillPlanLeg `json:"sellers"`
-	TotalAtomic string        `json:"totalAtomic"`
+	Outputs         []fillPlanOutput `json:"outputs"`
+	TotalAtomic     string           `json:"totalAtomic"`
+	Nonce           string           `json:"nonce"`
+	RoundId         string           `json:"roundId"`
+	HeadroomMB      int64            `json:"headroomMB"`
+	HeadroomCUMicro int64            `json:"headroomCUMicro"`
+}
+
+func chainUnreadable(msg string) *APIError {
+	return &APIError{Status: http.StatusBadGateway, Code: "chain_unreadable", Message: msg}
 }
 
 func (s *Server) handleFillPlan(w http.ResponseWriter, r *http.Request) {
@@ -91,64 +104,143 @@ func (s *Server) handleFillPlan(w http.ResponseWriter, r *http.Request) {
 	if !s.checkPoolGate(w, r) {
 		return
 	}
-	needMB := req.Mem
 	needMicro := store.MicroCU(req.CU)
-	spares := s.ledger.Spares(buyer)
-	sort.Slice(spares, func(i, j int) bool {
-		if spares[i].RemMBHours != spares[j].RemMBHours {
-			return spares[i].RemMBHours > spares[j].RemMBHours
-		}
-		return spares[i].Wallet < spares[j].Wallet
-	})
-	sellers := []fillPlanLeg{}
-	total := big.NewInt(0)
-	for _, sp := range spares {
-		if needMB <= 0 && needMicro <= 0 {
-			break
-		}
-		maxMB := sp.RemMem - 1
-		if maxMB < 0 {
-			maxMB = 0
-		}
-		maxCU := sp.RemMicro - 1
-		if maxCU < 0 {
-			maxCU = 0
-		}
-		takeMB := needMB
-		if takeMB > maxMB {
-			takeMB = maxMB
-		}
-		takeCU := needMicro
-		if takeCU > maxCU {
-			takeCU = maxCU
-		}
-		if takeMB <= 0 && takeCU <= 0 {
+	freeMicro, freeMem := s.ledger.Headroom(store.MicroCU(s.cfg.CPUTotal), s.cfg.MemMB)
+	if req.Mem > freeMem || needMicro > freeMicro {
+		writeJSONError(w, s.logger, insufficientSpare(fmt.Sprintf("want mem=%d cuMicro=%d exceeds total spare", req.Mem, needMicro)))
+		return
+	}
+	s.syncCurrentRound(r.Context())
+	roundId := s.ledger.CurrentRound()
+	if roundId == nil {
+		s.logger.Warn("fill-plan denied fail-closed: no tracked funding round")
+		writeJSONError(w, s.logger, chainUnreadable("fill-plan denied: no tracked funding round"))
+		return
+	}
+	cr, ok := s.verifier.(settledParticipationReader)
+	if !ok {
+		s.logger.Warn("fill-plan denied fail-closed: verifier has no commitment surface")
+		writeJSONError(w, s.logger, chainUnreadable("fill-plan denied: locked amounts unreadable"))
+		return
+	}
+	rateMB, err := money.RatePerMB(s.cfg.TargetAtomic, s.cfg.MemMB)
+	if err != nil {
+		writeJSONError(w, s.logger, fmt.Errorf("rate per MB: %w", err))
+		return
+	}
+	rateCU, err := money.RatePerCU(s.cfg.TargetAtomic, s.cfg.CPUTotal)
+	if err != nil {
+		writeJSONError(w, s.logger, fmt.Errorf("rate per CU: %w", err))
+		return
+	}
+	wallets := s.ledger.Wallets()
+	sort.Strings(wallets)
+	locked := make(map[string]*big.Int, len(wallets))
+	used := make(map[string]*big.Int, len(wallets))
+	agents := make([]string, 0, len(wallets))
+	for _, wstr := range wallets {
+		if wstr == buyer.String() {
 			continue
 		}
-		cost, err := transferCost(s.cfg.TargetAtomic, s.cfg.MemMB, s.cfg.CPUTotal, float64(takeCU)/1e6, takeMB)
+		stake, err := cr.ReadCommitted(r.Context(), s.cfg.PoolV2Address, roundId, wstr)
+		if err != nil {
+			s.logger.Warn("fill-plan denied fail-closed: stake unreadable",
+				slog.String("wallet", wstr),
+				slog.String("round", roundId.String()),
+				slog.Any("err", err))
+			writeJSONError(w, s.logger, chainUnreadable("fill-plan denied: locked amounts unreadable"))
+			return
+		}
+		if stake == nil {
+			stake = big.NewInt(0)
+		}
+		locked[wstr] = stake
+		addr, err := domain.NewWalletAddress(wstr)
+		if err != nil {
+			writeJSONError(w, s.logger, fmt.Errorf("ledger wallet %q: %w", wstr, err))
+			return
+		}
+		usage, err := s.ledger.Usage(addr)
+		if err != nil {
+			writeJSONError(w, s.logger, fmt.Errorf("ledger usage %q: %w", wstr, err))
+			return
+		}
+		cost, err := imputedCost(usage, rateMB, rateCU)
 		if err != nil {
 			writeJSONError(w, s.logger, badRequest(err.Error()))
 			return
 		}
-		seller, err := domain.NewWalletAddress(sp.Wallet)
-		if err != nil {
-			continue
-		}
-		sellers = append(sellers, fillPlanLeg{
-			Wallet:       seller.String(),
-			MB:           takeMB,
-			CUMicro:      takeCU,
-			AmountAtomic: cost.String(),
-		})
-		total.Add(total, cost)
-		needMB -= takeMB
-		needMicro -= takeCU
+		used[wstr] = cost
+		agents = append(agents, wstr)
 	}
-	if needMB > 0 || needMicro > 0 {
-		writeJSONError(w, s.logger, insufficientSpare(fmt.Sprintf("want mem=%d cuMicro=%d exceeds total spare", req.Mem, store.MicroCU(req.CU))))
+	shares, err := store.PayoutShares(locked, used)
+	if err != nil {
+		if errors.Is(err, store.ErrNoPayoutSkew) {
+			writeJSONError(w, s.logger, insufficientSpare(fmt.Sprintf("want mem=%d cuMicro=%d: no skewed agents to pay", req.Mem, needMicro)))
+			return
+		}
+		writeJSONError(w, s.logger, fmt.Errorf("payout shares: %w", err))
 		return
 	}
-	writeJSON(w, http.StatusOK, fillPlanResponse{Sellers: sellers, TotalAtomic: total.String()})
+	total, err := transferCost(s.cfg.TargetAtomic, s.cfg.MemMB, s.cfg.CPUTotal, req.CU, req.Mem)
+	if err != nil {
+		writeJSONError(w, s.logger, badRequest(err.Error()))
+		return
+	}
+	amounts := make(map[string]*big.Int, len(agents))
+	paid := make([]string, 0, len(agents))
+	sum := big.NewInt(0)
+	for _, a := range agents {
+		amt := new(big.Int).Quo(new(big.Int).Mul(total, shares[a].Num()), shares[a].Denom())
+		amounts[a] = amt
+		sum.Add(sum, amt)
+		if shares[a].Sign() > 0 {
+			paid = append(paid, a)
+		}
+	}
+	for i := 0; new(big.Int).Sub(total, sum).Sign() > 0; i++ {
+		amounts[paid[i%len(paid)]].Add(amounts[paid[i%len(paid)]], big.NewInt(1))
+		sum.Add(sum, big.NewInt(1))
+	}
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		writeJSONError(w, s.logger, fmt.Errorf("mint plan nonce: %w", err))
+		return
+	}
+	outputs := make([]fillPlanOutput, 0, len(agents))
+	for _, a := range agents {
+		if amounts[a].Sign() <= 0 {
+			continue
+		}
+		outputs = append(outputs, fillPlanOutput{Account: a, AmountAtomic: amounts[a].String()})
+	}
+	writeJSON(w, http.StatusOK, fillPlanResponse{
+		Outputs:         outputs,
+		TotalAtomic:     total.String(),
+		Nonce:           hex.EncodeToString(raw[:]),
+		RoundId:         roundId.String(),
+		HeadroomMB:      freeMem,
+		HeadroomCUMicro: freeMicro,
+	})
+}
+
+// imputedCost prices burned usage at cost basis with bigint math only:
+// floor(usedCUSeconds*rateCU + usedMBHours*rateMB). Both usage dimensions
+// are floats, so each rides big.Rat exactly like the transferCost cu leg.
+func imputedCost(usage domain.Usage, rateMB, rateCU *big.Int) (*big.Int, error) {
+	cuRat, ok := new(big.Rat).SetString(strconv.FormatFloat(usage.CUSeconds, 'g', -1, 64))
+	if !ok {
+		return nil, fmt.Errorf("cuSeconds=%v: %w", usage.CUSeconds, domain.ErrInvalidQuota)
+	}
+	mbRat, ok := new(big.Rat).SetString(strconv.FormatFloat(usage.MBHours, 'g', -1, 64))
+	if !ok {
+		return nil, fmt.Errorf("mbHours=%v: %w", usage.MBHours, domain.ErrInvalidQuota)
+	}
+	legs := new(big.Rat).Add(
+		new(big.Rat).Mul(new(big.Rat).SetInt(rateCU), cuRat),
+		new(big.Rat).Mul(new(big.Rat).SetInt(rateMB), mbRat),
+	)
+	return new(big.Int).Quo(legs.Num(), legs.Denom()), nil
 }
 
 type transferLeg struct {
@@ -277,4 +369,211 @@ func (s *Server) handleTransferMulti(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	writeJSON(w, http.StatusOK, multiTransferResponse{Sellers: out, To: toSlice, ToToken: toToken})
+}
+
+const commitMintMulticall = "0xcA11bde05977b3631167028862bE2a173976CA11"
+const commitMintUSDC = "0x3600000000000000000000000000000000000000"
+const commitMintTransferSig = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4ad29a65c048aa384f"
+
+type commitMintOutput struct {
+	Account      string `json:"account"`
+	AmountAtomic string `json:"amountAtomic"`
+}
+
+type commitMintRequest struct {
+	To               string             `json:"to"`
+	MB               int64              `json:"mb"`
+	CUMicro          int64              `json:"cuMicro"`
+	SettlementTxHash string             `json:"settlementTxHash"`
+	Nonce            string             `json:"nonce"`
+	RoundId          string             `json:"roundId"`
+	Outputs          []commitMintOutput `json:"outputs"`
+}
+
+type commitMintResponse struct {
+	To      quotaSlice `json:"to"`
+	ToToken string     `json:"toToken,omitempty"`
+}
+
+func validHex64(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func padTopic(addr string) string {
+	hexed := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(addr), "0x"))
+	return "0x" + strings.Repeat("0", 64-len(hexed)) + hexed
+}
+
+func parseTopicUint(data string) (*big.Int, bool) {
+	s := strings.TrimSpace(data)
+	if len(s) < 3 || s[0] != '0' || (s[1] != 'x' && s[1] != 'X') {
+		return nil, false
+	}
+	v, ok := new(big.Int).SetString(s[2:], 16)
+	if !ok || v.Sign() < 0 {
+		return nil, false
+	}
+	return v, true
+}
+
+func (s *Server) handleCommitMint(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAppKey(w, r) {
+		return
+	}
+	var req commitMintRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSONError(w, s.logger, badRequest("invalid JSON: "+err.Error()))
+		return
+	}
+	buyer, err := domain.NewWalletAddress(req.To)
+	if err != nil {
+		writeJSONError(w, s.logger, badRequest(err.Error()))
+		return
+	}
+	if req.MB < 0 || req.CUMicro < 0 || (req.MB == 0 && req.CUMicro == 0) {
+		writeJSONError(w, s.logger, badRequest(fmt.Sprintf("mb=%d cuMicro=%d: amounts must be non-negative with at least one dimension minted", req.MB, req.CUMicro)))
+		return
+	}
+	if len(req.Outputs) == 0 || int64(len(req.Outputs)) > s.cfg.MaxAgents {
+		writeJSONError(w, s.logger, badRequest(fmt.Sprintf("outputs=%d: must be non-empty within cap %d", len(req.Outputs), s.cfg.MaxAgents)))
+		return
+	}
+	accts := make([]string, len(req.Outputs))
+	amounts := make([]*big.Int, len(req.Outputs))
+	sum := big.NewInt(0)
+	for i, o := range req.Outputs {
+		acct, err := domain.NewWalletAddress(o.Account)
+		if err != nil {
+			writeJSONError(w, s.logger, badRequest(fmt.Sprintf("outputs[%d]: %v", i, err)))
+			return
+		}
+		if acct.String() == buyer.String() {
+			writeJSONError(w, s.logger, badRequest(fmt.Sprintf("outputs[%d] pays the buyer itself", i)))
+			return
+		}
+		if i > 0 && accts[i-1] >= acct.String() {
+			writeJSONError(w, s.logger, badRequest("outputs must be wallet-asc unique"))
+			return
+		}
+		amt, ok := new(big.Int).SetString(strings.TrimSpace(o.AmountAtomic), 10)
+		if !ok || amt.Sign() <= 0 {
+			writeJSONError(w, s.logger, badRequest(fmt.Sprintf("outputs[%d].amountAtomic %q is not a positive uint decimal string", i, o.AmountAtomic)))
+			return
+		}
+		accts[i] = acct.String()
+		amounts[i] = amt
+		sum.Add(sum, amt)
+	}
+	if !validTxHash(req.SettlementTxHash) {
+		writeJSONError(w, s.logger, badRequest("settlementTxHash must be a 0x-prefixed 32-byte hex transaction hash"))
+		return
+	}
+	if !validHex64(strings.TrimSpace(req.Nonce)) {
+		writeJSONError(w, s.logger, badRequest("nonce must be 32 bytes hex"))
+		return
+	}
+	if strings.TrimSpace(req.RoundId) == "" {
+		writeJSONError(w, s.logger, badRequest("roundId is required"))
+		return
+	}
+	total, err := transferCost(s.cfg.TargetAtomic, s.cfg.MemMB, s.cfg.CPUTotal, float64(req.CUMicro)/1e6, req.MB)
+	if err != nil {
+		writeJSONError(w, s.logger, badRequest(err.Error()))
+		return
+	}
+	if sum.Cmp(total) != 0 {
+		writeJSONError(w, s.logger, paymentRequired(fmt.Sprintf("outputs sum %s != quoted cost %s", sum, total)))
+		return
+	}
+	s.syncCurrentRound(r.Context())
+	if cur := s.ledger.CurrentRound(); cur == nil {
+		s.logger.Warn("commit-mint denied fail-closed: no tracked funding round")
+		writeJSONError(w, s.logger, chainUnreadable("commit-mint denied: no tracked funding round"))
+		return
+	} else if cur.String() != strings.TrimSpace(req.RoundId) {
+		writeJSONError(w, s.logger, badRequest(fmt.Sprintf("roundId %q != current round %s: refresh the fill plan", req.RoundId, cur)))
+		return
+	}
+	if !s.checkPoolGate(w, r) {
+		return
+	}
+	if err := s.verifySettlementAggregate(r.Context(), req.SettlementTxHash, buyer, accts, amounts); err != nil {
+		writeJSONError(w, s.logger, err)
+		return
+	}
+	toToken, err := s.ledger.MintFromHeadroom(buyer, req.MB, req.CUMicro, []string{req.SettlementTxHash}, s.cfg.MaxAgents, store.MicroCU(s.cfg.CPUTotal), s.cfg.MemMB)
+	if err != nil {
+		writeJSONError(w, s.logger, fmt.Errorf("commit mint: %w", err))
+		return
+	}
+	toSlice, err := s.slice(buyer)
+	if err != nil {
+		writeJSONError(w, s.logger, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, commitMintResponse{To: toSlice, ToToken: toToken})
+}
+
+func (s *Server) verifySettlementAggregate(ctx context.Context, txHash string, buyer domain.WalletAddress, accts []string, amounts []*big.Int) error {
+	receipt, err := s.verifier.TransactionReceipt(ctx, txHash)
+	if err != nil {
+		return paymentRequired(fmt.Sprintf("receipt for %s unavailable: %v", txHash, err))
+	}
+	if receipt.Status != "0x1" && receipt.Status != "1" {
+		return paymentRequired(fmt.Sprintf("tx %s status %q is not success", txHash, receipt.Status))
+	}
+	if !strings.EqualFold(receipt.From, buyer.String()) {
+		return paymentRequired(fmt.Sprintf("tx %s from %s, want buyer %s", txHash, receipt.From, buyer.String()))
+	}
+	if !strings.EqualFold(receipt.To, commitMintMulticall) {
+		return paymentRequired(fmt.Sprintf("tx %s to %s, want Multicall3 %s", txHash, receipt.To, commitMintMulticall))
+	}
+	head, err := s.verifier.BlockNumber(ctx)
+	if err != nil {
+		return paymentRequired(fmt.Sprintf("head unavailable for %s: %v", txHash, err))
+	}
+	depth := new(big.Int).Sub(head, receipt.BlockNumber)
+	if depth.Sign() < 0 {
+		return paymentRequired(fmt.Sprintf("tx %s not yet mined", txHash))
+	}
+	depth.Add(depth, big.NewInt(1))
+	if depth.Cmp(big.NewInt(s.cfg.Confirmations)) < 0 {
+		return paymentRequired(fmt.Sprintf("tx %s has %s confirmations, want %d", txHash, depth, s.cfg.Confirmations))
+	}
+	wantFrom := padTopic(buyer.String())
+	seen := 0
+	for _, lg := range receipt.Logs {
+		if !strings.EqualFold(strings.TrimSpace(lg.Address), commitMintUSDC) {
+			continue
+		}
+		if len(lg.Topics) != 3 || !strings.EqualFold(lg.Topics[0], commitMintTransferSig) {
+			continue
+		}
+		if !strings.EqualFold(lg.Topics[1], wantFrom) {
+			continue
+		}
+		if seen >= len(accts) {
+			return paymentRequired(fmt.Sprintf("tx %s carries more buyer USDC Transfers than %d outputs", txHash, len(accts)))
+		}
+		if !strings.EqualFold(lg.Topics[2], padTopic(accts[seen])) {
+			return paymentRequired(fmt.Sprintf("tx %s Transfer %d to %s, want %s", txHash, seen, lg.Topics[2], accts[seen]))
+		}
+		got, ok := parseTopicUint(lg.Data)
+		if !ok || got.Cmp(amounts[seen]) != 0 {
+			return paymentRequired(fmt.Sprintf("tx %s Transfer %d value mismatch, want %s", txHash, seen, amounts[seen]))
+		}
+		seen++
+	}
+	if seen != len(accts) {
+		return paymentRequired(fmt.Sprintf("tx %s carries %d buyer USDC Transfers, want %d outputs", txHash, seen, len(accts)))
+	}
+	return nil
 }
