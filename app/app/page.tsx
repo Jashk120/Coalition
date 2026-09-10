@@ -126,6 +126,15 @@ function shortAddress(address: string): string {
     : address;
 }
 
+/** Decimal-string spare amount greater than zero. */
+function hasSpareAmount(value: string): boolean {
+  try {
+    return BigInt(value) > 0n;
+  } catch {
+    return value !== "" && value !== "0";
+  }
+}
+
 /** Decimal USDC string from 6-decimal atomic units; falls back to raw input. */
 function formatUsdc(atomic: string): string {
   try {
@@ -590,6 +599,22 @@ export default function DashboardPage() {
     }
   }, [loadAgents, loadActivity, loadUsage]);
 
+  // Resale only exists once funding settles AND someone actually holds
+  // spare: an open pool (or fully-used allocations) has nothing to sell,
+  // so the section stays hidden instead of showing no-quota rows and a
+  // plan form that can only 409. Market polling continues while hidden
+  // so the section appears as soon as spare lands.
+  const resaleLive =
+    usage.status === "ready" &&
+    usage.settled &&
+    market.status === "ready" &&
+    market.entries.some(
+      (entry) =>
+        entry.empty !== true &&
+        (hasSpareAmount(entry.availableMB) ||
+          hasSpareAmount(entry.availableCU)),
+    );
+
   return (
     <main>
       <header>
@@ -630,6 +655,7 @@ export default function DashboardPage() {
         <div className="mono">{OUTSIDE_BUYER.ensName}</div>
       </section>
 
+      {resaleLive ? (
       <section className="card" aria-label="Resale market">
         <h2>Resale market</h2>
         <p className="fill-label">
@@ -638,13 +664,7 @@ export default function DashboardPage() {
           x402 Gateway flow — no local key. After the buy the buyer lands in
           Live Compute Usage like the other agents.
         </p>
-        {market.status === "loading" ? (
-          <div className="state">Loading resale market…</div>
-        ) : market.status === "error" ? (
-          <div className="state state-error" role="alert">
-            Market unavailable: {market.message}
-          </div>
-        ) : (
+        {market.status === "ready" ? (
           <div className="table-wrap">
             <table>
               <thead>
@@ -679,7 +699,7 @@ export default function DashboardPage() {
               </tbody>
             </table>
           </div>
-        )}
+        ) : null}
         <p className="fill-label">
           Want mem (MB) + CU, preview the fill plan, then pay it leg by leg.
         </p>
@@ -767,6 +787,7 @@ export default function DashboardPage() {
           </div>
         ) : null}
       </section>
+      ) : null}
 
       <section className="card" aria-label="Pool controls and funding results">
         <h2>Pool controls + funding results</h2>
