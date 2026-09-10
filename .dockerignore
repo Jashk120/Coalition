@@ -1,0 +1,24 @@
+# Root build context (used by app/Dockerfile). The orchestrator image builds
+# from ./orchestrator as its context, so this file does not affect it.
+node_modules/
+.next/
+out/
+dist/
+coverage/
+.git/
+.github/
+.omo/
+contracts/out/
+contracts/cache/
+subgraph/
+demo/
+plans/
+assets/
+*.log
+npm-debug.log*
+.env
+.env.*
+!.env.example
+.DS_Store
+recovery/
+app/logs/

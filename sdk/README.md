@@ -1,7 +1,7 @@
 # Coalition SDK
 
 TypeScript client for the Coalition pooling protocol on Arc testnet.
-Requires Node.js 26 or later.
+Requires Node.js 22 or later.
 
 ```sh
 npm install @jx-nexus/coalition viem

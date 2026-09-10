@@ -20,7 +20,7 @@ But equal payment doesn't mean equal usage — agent A might pay $2 for 1GB whil
 
 ## Requirements
 
-- Node.js 26 or later
+- Node.js 22 or later
 
 ## Development
 
