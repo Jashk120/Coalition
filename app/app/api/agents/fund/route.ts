@@ -144,11 +144,6 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
 
   const started = Date.now();
   const client = createCircleClient(env.apiKey, env.entitySecret);
-  log("info", "agents.fund.start", {
-    route: "POST /api/agents/fund",
-    wallets: env.walletIds.length,
-    pool: POOL_ADDRESS,
-  });
 
   try {
     const slots: { readonly index: number; readonly step: FundStep }[] = [];
@@ -167,6 +162,20 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
     };
     const jobs: FundJob[] = [];
     const opening = await readCurrentRound().catch((): null => null);
+    log("info", "agents.fund.start", {
+      route: "POST /api/agents/fund",
+      wallets: env.walletIds.length,
+      pool: POOL_ADDRESS,
+      source: opening === null ? "unknown" : opening.source,
+      ...(opening?.note === undefined ? {} : { note: opening.note }),
+    });
+    if (opening !== null && opening.view.roundId === "0") {
+      log("warn", "agents.fund.round-fallback", {
+        route: "POST /api/agents/fund",
+        source: opening.source,
+        ...(opening.note === undefined ? {} : { note: opening.note }),
+      });
+    }
     if (opening === null) {
       for (const [index, walletId] of env.walletIds.entries()) {
         slots.push({ index, step: {

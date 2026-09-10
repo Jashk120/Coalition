@@ -110,6 +110,7 @@ export type ActivityResponse =
       readonly ok: true;
       readonly pool: string;
       readonly events: readonly ActivityEvent[];
+      readonly note?: string;
     }
   | { readonly ok: false; readonly error: string };
 

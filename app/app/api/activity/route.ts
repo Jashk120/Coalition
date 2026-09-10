@@ -36,6 +36,19 @@ export async function GET(): Promise<NextResponse<ActivityResponse>> {
     return NextResponse.json({ ok: true, pool: POOL_ADDRESS, events });
   } catch (error) {
     const message = errorMessage(error);
+    if (cache !== null) {
+      log("warn", "activity.unavailable", {
+        route: "GET /api/activity",
+        error: message,
+        cached: true,
+      });
+      return NextResponse.json({
+        ok: true,
+        pool: POOL_ADDRESS,
+        events: cache.events,
+        note: `stale: ${message.split("\n")[0]}`,
+      });
+    }
     log("warn", "activity.unavailable", {
       route: "GET /api/activity",
       error: message,

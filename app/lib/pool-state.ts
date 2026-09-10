@@ -93,7 +93,7 @@ async function readChainState(): Promise<PoolState> {
         "chain getPoolState",
       );
     } catch (error) {
-      if (!isRateLimit(error) || attempt >= 3) throw error;
+      if (!isRetryable(error) || attempt >= 3) throw error;
       await new Promise((resolve) =>
         setTimeout(resolve, 1500 * 2 ** attempt),
       );
@@ -189,7 +189,7 @@ async function readChainRoundId(): Promise<bigint> {
         "chain getCurrentRoundId",
       );
     } catch (error) {
-      if (!isRateLimit(error) || attempt >= 3) throw error;
+      if (!isRetryable(error) || attempt >= 3) throw error;
       await new Promise((resolve) =>
         setTimeout(resolve, 1500 * 2 ** attempt),
       );
@@ -213,7 +213,7 @@ async function readChainRoundState(roundId: bigint): Promise<RoundState> {
         "chain getRoundState",
       );
     } catch (error) {
-      if (!isRateLimit(error) || attempt >= 3) throw error;
+      if (!isRetryable(error) || attempt >= 3) throw error;
       await new Promise((resolve) =>
         setTimeout(resolve, 1500 * 2 ** attempt),
       );
@@ -416,6 +416,13 @@ function isRateLimit(error: unknown): boolean {
   return /rate limit|exceeds defined limit|too many requests|429/i.test(
     message,
   );
+}
+
+/** Retryable RPC stall: rate-limit plus transient timeout/network blips. */
+function isRetryable(error: unknown): boolean {
+  if (isRateLimit(error)) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /timed out after|timeout|fetch failed|network|ECONN/i.test(message);
 }
 
 type ActivityClient = ReturnType<typeof arcPublicClient>;
