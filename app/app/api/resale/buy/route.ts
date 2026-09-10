@@ -271,6 +271,39 @@ export async function POST(request: Request): Promise<NextResponse> {
       ? payload["toToken"]
       : null;
   const to = isRecord(payload) ? payload["to"] : null;
+  if (toToken !== null) {
+    try {
+      const provision = await fetch(`${orchestratorBaseUrl()}/run`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${toToken}`,
+        },
+        body: JSON.stringify({ wallet: env.buyerAddress, cmd: ["echo", "hi"] }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!provision.ok) {
+        const detail = await provision.text().catch(() => "");
+        const firstLine = detail.split("\n")[0];
+        log("warn", "resale.buy.provision", {
+          route: "POST /api/resale/buy",
+          ok: false,
+          error:
+            firstLine !== undefined && firstLine !== ""
+              ? firstLine
+              : `provision returned ${String(provision.status)}`,
+        });
+      }
+    } catch (error) {
+      const firstLine = errorMessage(error).split("\n")[0];
+      log("warn", "resale.buy.provision", {
+        route: "POST /api/resale/buy",
+        ok: false,
+        error: firstLine ?? "provision failed",
+      });
+    }
+  }
   log("info", "resale.buy.complete", {
     route: "POST /api/resale/buy",
     legs: legs.length,
