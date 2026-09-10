@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchQuote } from "@jx-nexus/coalition";
+import { OUTSIDE_BUYER } from "@/lib/constants";
 import { log } from "@/lib/logger";
 import { orchestratorBaseUrl } from "@/lib/pool-state";
 
@@ -45,7 +46,9 @@ export async function GET(): Promise<NextResponse> {
       if (
         isRecord(agent) &&
         typeof agent["wallet"] === "string" &&
-        ADDRESS_PATTERN.test(agent["wallet"] as string)
+        ADDRESS_PATTERN.test(agent["wallet"] as string) &&
+        (agent["wallet"] as string).toLowerCase() !==
+          OUTSIDE_BUYER.wallet.toLowerCase()
       ) {
         wallets.push(agent["wallet"] as string);
       }

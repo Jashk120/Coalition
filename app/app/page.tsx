@@ -220,7 +220,6 @@ export default function DashboardPage() {
   const [funding, setFunding] = useState(false);
   const [fundError, setFundError] = useState<string | null>(null);
   const [fundSteps, setFundSteps] = useState<readonly FundStep[]>([]);
-  const [rotating, setRotating] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
   const [rotateResult, setRotateResult] = useState<
     Extract<RotateResponse, { readonly ok: true }>["result"] | null
@@ -447,30 +446,6 @@ export default function DashboardPage() {
       setFundError(error instanceof Error ? error.message : String(error));
     } finally {
       setFunding(false);
-    }
-  }, [loadAgents, loadActivity]);
-
-  const rotateDemo = useCallback(async () => {
-    setRotating(true);
-    setRotateError(null);
-    try {
-      const response = await fetch("/api/agents/rotate", {
-        method: "POST",
-        cache: "no-store",
-      });
-      const body = (await parseJson(response)) as RotateResponse;
-      if (body.ok) {
-        setRotateResult(body.result);
-        setFundSteps([]);
-        await loadAgents();
-        await loadActivity();
-      } else {
-        setRotateError(body.error);
-      }
-    } catch (error) {
-      setRotateError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRotating(false);
     }
   }, [loadAgents, loadActivity]);
 
@@ -836,8 +811,7 @@ export default function DashboardPage() {
           Free pool resets the whole demo loop in one click: containers are
           revoked, the finished round is closed, and a fresh round opens for
           new agents (provider wallet required for the new round; refused
-          with a countdown while a round is still fundable). Rotate pool
-          alone only opens the next round without touching containers.
+          with a countdown while a round is still fundable).
           Steps from the last Fund on-chain run need CIRCLE_* server env.
         </p>
         <button
@@ -847,14 +821,6 @@ export default function DashboardPage() {
           disabled={freeing}
         >
           {freeing ? "Freeing…" : "Free Pool"}
-        </button>{" "}
-        <button
-          className="trigger"
-          type="button"
-          onClick={() => void rotateDemo()}
-          disabled={rotating}
-        >
-          {rotating ? "Rotating…" : "Rotate pool"}
         </button>
         {freeError !== null ? (
           <div className="state state-error" role="alert">

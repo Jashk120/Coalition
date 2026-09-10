@@ -6,7 +6,7 @@ import {
   readCircleEnv,
 } from "@/lib/circle-fund";
 import { log } from "@/lib/logger";
-import { readCurrentRound } from "@/lib/pool-state";
+import { orchestratorBaseUrl, readCurrentRound } from "@/lib/pool-state";
 import type { RotateResponse } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +28,13 @@ function parsePositiveBigInt(value: unknown): bigint | null {
   } catch {
     return null;
   }
+}
+
+/** Server-side app key only — never a NEXT_PUBLIC_ value. */
+function appKey(): string | undefined {
+  const key =
+    process.env["ORCHESTRATOR_APP_KEY"] ?? process.env["APP_KEY"];
+  return key !== undefined && key !== "" ? key : undefined;
 }
 
 /**
@@ -165,6 +172,43 @@ export async function POST(req: Request): Promise<NextResponse<RotateResponse>> 
       closedRoundId,
       newRoundId,
     });
+    try {
+      const base = orchestratorBaseUrl();
+      const key = appKey();
+      const upstream = await fetch(`${base}/free-pool`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(key === undefined
+            ? {}
+            : { authorization: `Bearer ${key}`, "x-app-key": key }),
+        },
+        body: "{}",
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!upstream.ok) {
+        log("warn", "agents.rotate.free_pool_bad_upstream", {
+          route: "POST /api/agents/rotate",
+          status: upstream.status,
+          closedRoundId,
+          newRoundId,
+        });
+      } else {
+        log("info", "agents.rotate.free_pool_complete", {
+          route: "POST /api/agents/rotate",
+          closedRoundId,
+          newRoundId,
+        });
+      }
+    } catch (error) {
+      log("warn", "agents.rotate.free_pool_unreachable", {
+        route: "POST /api/agents/rotate",
+        error: errorMessage(error),
+        closedRoundId,
+        newRoundId,
+      });
+    }
     return NextResponse.json({
       ok: true,
       pool: POOL_ADDRESS,
