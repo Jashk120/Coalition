@@ -38,6 +38,9 @@ var (
 	// ErrDuplicatePayment is returned when a transfer reuses an already-spent
 	// payment hash (HTTP 409 duplicate_payment).
 	ErrDuplicatePayment = errors.New("store: payment hash already spent")
+	// ErrNoPayoutSkew is returned when no agent has a positive payout skew
+	// (HTTP 409 insufficient_spare).
+	ErrNoPayoutSkew = errors.New("store: no positive payout skew")
 )
 
 // microPerCU scales fractional cores to integers: 1 CU = 1e6 micro-CU. The
@@ -155,6 +158,30 @@ func (s *Store) Totals() (cpu float64, memMB int64) {
 		memMB += r.entitlement.MemMB
 	}
 	return cpu, memMB
+}
+
+func (s *Store) Headroom(totalCPUMicro, totalMemMB int64) (freeMicro, freeMem int64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keys := make([]string, 0, len(s.wallets))
+	for k := range s.wallets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var sumMicro, sumMem int64
+	for _, k := range keys {
+		sumMicro += cpuMicroOf(s.wallets[k].entitlement.CPU)
+		sumMem += s.wallets[k].entitlement.MemMB
+	}
+	freeMicro = totalCPUMicro - sumMicro
+	if freeMicro < 0 {
+		freeMicro = 0
+	}
+	freeMem = totalMemMB - sumMem
+	if freeMem < 0 {
+		freeMem = 0
+	}
+	return freeMicro, freeMem
 }
 
 // mintTokenLocked mints a fresh opaque bearer token for a record already
@@ -748,6 +775,111 @@ func (s *Store) TransferMultiPaid(buyer domain.WalletAddress, legs []MultiLeg, s
 		dst.entitlement.MemMB += a.mb
 		dst.entitlement.CPU = microToFloat(cpuMicroOf(dst.entitlement.CPU) + a.cuMicro)
 	}
+	for _, id := range ids {
+		s.spent[id] = true
+	}
+	return toToken, nil
+}
+
+func PayoutShares(lockedAtomic map[string]*big.Int, valueUsedAtomic map[string]*big.Int) (map[string]*big.Rat, error) {
+	skews := make(map[string]*big.Int, len(lockedAtomic)+len(valueUsedAtomic))
+	for k, v := range lockedAtomic {
+		skew := new(big.Int)
+		if v != nil {
+			skew.Set(v)
+		}
+		if u := valueUsedAtomic[k]; u != nil {
+			skew.Sub(skew, u)
+		}
+		if skew.Sign() < 0 {
+			skew.SetInt64(0)
+		}
+		skews[k] = skew
+	}
+	for k, u := range valueUsedAtomic {
+		if _, ok := skews[k]; ok {
+			continue
+		}
+		skew := new(big.Int)
+		if u != nil {
+			skew.Neg(u)
+		}
+		if skew.Sign() < 0 {
+			skew.SetInt64(0)
+		}
+		skews[k] = skew
+	}
+	total := new(big.Int)
+	for _, skew := range skews {
+		total.Add(total, skew)
+	}
+	if total.Sign() <= 0 {
+		return nil, ErrNoPayoutSkew
+	}
+	out := make(map[string]*big.Rat, len(skews))
+	for k, skew := range skews {
+		out[k] = new(big.Rat).SetFrac(skew, total)
+	}
+	return out, nil
+}
+
+func (s *Store) MintFromHeadroom(to domain.WalletAddress, mb int64, cuMicro int64, settlementIDs []string, maxAgents int64, totalCPUMicro, totalMemMB int64) (toToken string, err error) {
+	if mb < 0 || cuMicro < 0 || (mb == 0 && cuMicro == 0) {
+		return "", fmt.Errorf("mb=%d cuMicro=%d: %w", mb, cuMicro, domain.ErrInvalidQuota)
+	}
+	if len(settlementIDs) == 0 {
+		return "", fmt.Errorf("no settlement ids: %w", domain.ErrInvalidQuota)
+	}
+	ids := make([]string, len(settlementIDs))
+	seen := make(map[string]bool, len(settlementIDs))
+	for i, raw := range settlementIDs {
+		id := normalizeProof(raw)
+		if id == "" {
+			return "", fmt.Errorf("empty settlement id: %w", domain.ErrInvalidQuota)
+		}
+		if seen[id] {
+			return "", fmt.Errorf("settlement %s already spent: %w", settlementIDs[i], ErrDuplicatePayment)
+		}
+		seen[id] = true
+		ids[i] = id
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		if s.spent[id] {
+			return "", fmt.Errorf("settlement %s already spent: %w", id, ErrDuplicatePayment)
+		}
+	}
+	keys := make([]string, 0, len(s.wallets))
+	for k := range s.wallets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var sumMicro, sumMem int64
+	for _, k := range keys {
+		sumMicro += cpuMicroOf(s.wallets[k].entitlement.CPU)
+		sumMem += s.wallets[k].entitlement.MemMB
+	}
+	if cuMicro > totalCPUMicro-sumMicro || mb > totalMemMB-sumMem {
+		return "", fmt.Errorf("mint mb=%d cuMicro=%d exceeds headroom: %w", mb, cuMicro, ErrPoolExhausted)
+	}
+	dst, ok := s.wallets[to.String()]
+	newRecipient := !ok
+	if newRecipient && int64(s.distinctLocked()) >= maxAgents {
+		return "", fmt.Errorf("pool caps at %d agents: %w", maxAgents, ErrPoolExhausted)
+	}
+	if newRecipient {
+		dst = &record{}
+		s.wallets[to.String()] = dst
+		if tok, err := s.mintTokenLocked(dst); err != nil {
+			delete(s.wallets, to.String())
+			return "", err
+		} else {
+			toToken = tok
+		}
+	}
+	dst.entitlement.MemMB += mb
+	dst.entitlement.CPU = microToFloat(cpuMicroOf(dst.entitlement.CPU) + cuMicro)
 	for _, id := range ids {
 		s.spent[id] = true
 	}

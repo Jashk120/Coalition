@@ -740,3 +740,227 @@ func Test_FundingClosed_tracks_current_round(t *testing.T) {
 		t.Fatal("advancing to an open round reopens funding")
 	}
 }
+
+func Test_Headroom(t *testing.T) {
+	t.Run("empty ledger returns full totals", func(t *testing.T) {
+		s := NewStore(72)
+		freeMicro, freeMem := s.Headroom(1000000, 4096)
+		if freeMicro != 1000000 || freeMem != 4096 {
+			t.Fatalf("got %d/%d, want 1000000/4096", freeMicro, freeMem)
+		}
+	})
+	t.Run("partially allocated returns exact remainder", func(t *testing.T) {
+		s := NewStore(72)
+		s.SetEntitlement(mustWallet(t, testWalletA), mustEntitlement(t, 0.2, 800))
+		s.SetEntitlement(mustWallet(t, testWalletB), mustEntitlement(t, 0.3, 1000))
+		freeMicro, freeMem := s.Headroom(1000000, 4096)
+		if freeMicro != 500000 || freeMem != 2296 {
+			t.Fatalf("got %d/%d, want 500000/2296", freeMicro, freeMem)
+		}
+	})
+	t.Run("fully allocated returns zeros", func(t *testing.T) {
+		s := NewStore(72)
+		s.SetEntitlement(mustWallet(t, testWalletA), mustEntitlement(t, 0.2, 800))
+		s.SetEntitlement(mustWallet(t, testWalletB), mustEntitlement(t, 0.8, 3296))
+		freeMicro, freeMem := s.Headroom(1000000, 4096)
+		if freeMicro != 0 || freeMem != 0 {
+			t.Fatalf("got %d/%d, want 0/0", freeMicro, freeMem)
+		}
+	})
+	t.Run("never negative", func(t *testing.T) {
+		s := NewStore(72)
+		s.SetEntitlement(mustWallet(t, testWalletA), mustEntitlement(t, 0.8, 3000))
+		s.SetEntitlement(mustWallet(t, testWalletB), mustEntitlement(t, 0.8, 3000))
+		freeMicro, freeMem := s.Headroom(1000000, 4096)
+		if freeMicro != 0 || freeMem != 0 {
+			t.Fatalf("oversubscribed got %d/%d, want 0/0", freeMicro, freeMem)
+		}
+		freeMicro, freeMem = s.Headroom(500000, 7000)
+		if freeMicro != 0 || freeMem != 1000 {
+			t.Fatalf("cpu-oversubscribed got %d/%d, want 0/1000", freeMicro, freeMem)
+		}
+	})
+}
+
+func Test_PayoutShares(t *testing.T) {
+	locked := func(pairs ...any) map[string]*big.Int {
+		m := make(map[string]*big.Int)
+		for i := 0; i < len(pairs); i += 2 {
+			m[pairs[i].(string)] = big.NewInt(int64(pairs[i+1].(int)))
+		}
+		return m
+	}
+	t.Run("most skewed gets most and sums to exactly one", func(t *testing.T) {
+		got, err := PayoutShares(
+			locked("a", 300, "b", 100, "c", 50),
+			locked("a", 100, "b", 90, "c", 50),
+		)
+		if err != nil {
+			t.Fatalf("shares: %v", err)
+		}
+		if got["a"].Cmp(got["b"]) <= 0 || got["b"].Cmp(got["c"]) <= 0 {
+			t.Fatalf("want a > b > c, got a=%s b=%s c=%s", got["a"], got["b"], got["c"])
+		}
+		if got["c"].Sign() != 0 {
+			t.Fatalf("zero skew must get zero share, got %s", got["c"])
+		}
+		sum := new(big.Rat)
+		for _, v := range got {
+			sum.Add(sum, v)
+		}
+		if sum.Cmp(big.NewRat(1, 1)) != 0 {
+			t.Fatalf("shares sum to %s, want 1", sum)
+		}
+		if got["a"].Cmp(big.NewRat(20, 21)) != 0 || got["b"].Cmp(big.NewRat(1, 21)) != 0 {
+			t.Fatalf("want 20/21 and 1/21, got a=%s b=%s", got["a"], got["b"])
+		}
+	})
+	t.Run("negative skew clamps to zero", func(t *testing.T) {
+		got, err := PayoutShares(locked("a", 100, "b", 50), locked("a", 200, "b", 10))
+		if err != nil {
+			t.Fatalf("shares: %v", err)
+		}
+		if got["a"].Sign() != 0 {
+			t.Fatalf("over-recouped agent must get zero, got %s", got["a"])
+		}
+		if got["b"].Cmp(big.NewRat(1, 1)) != 0 {
+			t.Fatalf("sole positive skew must take all, got %s", got["b"])
+		}
+	})
+	t.Run("all zero skew errors", func(t *testing.T) {
+		if _, err := PayoutShares(locked("a", 100), locked("a", 100)); !errors.Is(err, ErrNoPayoutSkew) {
+			t.Fatalf("want ErrNoPayoutSkew, got %v", err)
+		}
+		if _, err := PayoutShares(nil, nil); !errors.Is(err, ErrNoPayoutSkew) {
+			t.Fatalf("empty inputs must error, got %v", err)
+		}
+	})
+}
+
+func Test_MintFromHeadroom(t *testing.T) {
+	setup := func(t *testing.T) *Store {
+		t.Helper()
+		s := NewStore(72)
+		s.SetEntitlement(mustWallet(t, testWalletA), mustEntitlement(t, 0.2, 800))
+		s.SetEntitlement(mustWallet(t, testWalletB), mustEntitlement(t, 0.3, 1000))
+		return s
+	}
+	buyer := mustWallet(t, "0x1111111111111111111111111111111111111111")
+
+	t.Run("fits in headroom mints and marks all ids", func(t *testing.T) {
+		s := setup(t)
+		entA, _ := s.Entitlement(mustWallet(t, testWalletA))
+		entB, _ := s.Entitlement(mustWallet(t, testWalletB))
+		tok, err := s.MintFromHeadroom(buyer, 200, MicroCU(0.1), []string{"settle-1", "settle-2"}, 5, 1000000, 4096)
+		if err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+		if tok == "" {
+			t.Fatal("new recipient must get a token")
+		}
+		got, err := s.Entitlement(buyer)
+		if err != nil {
+			t.Fatalf("buyer entitlement: %v", err)
+		}
+		if got.MemMB != 200 || got.CPU != 0.1 {
+			t.Fatalf("buyer got %+v, want 200MB/0.1CU", got)
+		}
+		if err := s.CheckSettlementsUnused([]string{"settle-1", "settle-2"}); !errors.Is(err, ErrDuplicatePayment) {
+			t.Fatalf("minted ids must be spent, got %v", err)
+		}
+		afterA, _ := s.Entitlement(mustWallet(t, testWalletA))
+		afterB, _ := s.Entitlement(mustWallet(t, testWalletB))
+		if afterA != entA || afterB != entB {
+			t.Fatalf("existing entitlements moved: A %+v->%+v B %+v->%+v", entA, afterA, entB, afterB)
+		}
+		freeMicro, freeMem := s.Headroom(1000000, 4096)
+		if freeMicro != 400000 || freeMem != 2096 {
+			t.Fatalf("headroom got %d/%d, want 400000/2096", freeMicro, freeMem)
+		}
+	})
+
+	t.Run("exceeding headroom fails and ids stay unused", func(t *testing.T) {
+		s := setup(t)
+		ids := []string{"big-1", "big-2"}
+		if _, err := s.MintFromHeadroom(buyer, 3000, MicroCU(0.1), ids, 5, 1000000, 4096); !errors.Is(err, ErrPoolExhausted) {
+			t.Fatalf("want ErrPoolExhausted, got %v", err)
+		}
+		if s.HasWallet(buyer) {
+			t.Fatal("failed mint must not create the buyer")
+		}
+		if err := s.CheckSettlementsUnused(ids); err != nil {
+			t.Fatalf("failed mint must leave ids unused, got %v", err)
+		}
+		if _, err := s.MintFromHeadroom(buyer, 200, MicroCU(0.1), ids, 5, 1000000, 4096); err != nil {
+			t.Fatalf("retry with same ids must succeed, got %v", err)
+		}
+	})
+
+	t.Run("one spent id fails the whole commit", func(t *testing.T) {
+		s := setup(t)
+		if _, err := s.MintFromHeadroom(buyer, 100, MicroCU(0.05), []string{"SeTTle-1"}, 5, 1000000, 4096); err != nil {
+			t.Fatalf("seed mint: %v", err)
+		}
+		fresh := mustWallet(t, "0x2222222222222222222222222222222222222222")
+		if _, err := s.MintFromHeadroom(fresh, 100, MicroCU(0.05), []string{" settle-1 ", "fresh-9"}, 5, 1000000, 4096); !errors.Is(err, ErrDuplicatePayment) {
+			t.Fatalf("want ErrDuplicatePayment, got %v", err)
+		}
+		if s.HasWallet(fresh) {
+			t.Fatal("failed mint must not create the recipient")
+		}
+		if err := s.CheckSettlementsUnused([]string{"fresh-9"}); err != nil {
+			t.Fatalf("fresh id must stay unused, got %v", err)
+		}
+		if _, err := s.MintFromHeadroom(fresh, 100, MicroCU(0.05), []string{"fresh-9"}, 5, 1000000, 4096); err != nil {
+			t.Fatalf("fresh id must still mint, got %v", err)
+		}
+	})
+
+	t.Run("existing recipient grows without token", func(t *testing.T) {
+		s := setup(t)
+		tok, err := s.MintFromHeadroom(mustWallet(t, testWalletA), 100, MicroCU(0.05), []string{"topup-1"}, 5, 1000000, 4096)
+		if err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+		if tok != "" {
+			t.Fatal("existing recipient must not get a new token")
+		}
+		got, _ := s.Entitlement(mustWallet(t, testWalletA))
+		if got.MemMB != 900 || got.CPU != 0.25 {
+			t.Fatalf("A got %+v, want 900MB/0.25CU", got)
+		}
+		gotB, _ := s.Entitlement(mustWallet(t, testWalletB))
+		if gotB.MemMB != 1000 || gotB.CPU != 0.3 {
+			t.Fatalf("B moved: %+v", gotB)
+		}
+	})
+
+	t.Run("new recipient cap enforced", func(t *testing.T) {
+		s := setup(t)
+		if _, err := s.MintFromHeadroom(buyer, 100, MicroCU(0.05), []string{"cap-1"}, 2, 1000000, 4096); !errors.Is(err, ErrPoolExhausted) {
+			t.Fatalf("want ErrPoolExhausted, got %v", err)
+		}
+		if s.HasWallet(buyer) {
+			t.Fatal("capped mint must not create the buyer")
+		}
+		if err := s.CheckSettlementsUnused([]string{"cap-1"}); err != nil {
+			t.Fatalf("capped mint must leave id unused, got %v", err)
+		}
+		if _, err := s.MintFromHeadroom(mustWallet(t, testWalletA), 100, MicroCU(0.05), []string{"cap-1"}, 2, 1000000, 4096); err != nil {
+			t.Fatalf("existing recipient ignores cap, got %v", err)
+		}
+	})
+
+	t.Run("empty id list rejected", func(t *testing.T) {
+		s := setup(t)
+		if _, err := s.MintFromHeadroom(buyer, 100, MicroCU(0.05), nil, 5, 1000000, 4096); !errors.Is(err, domain.ErrInvalidQuota) {
+			t.Fatalf("want ErrInvalidQuota, got %v", err)
+		}
+		if _, err := s.MintFromHeadroom(buyer, 100, MicroCU(0.05), []string{"ok-1", "ok-1"}, 5, 1000000, 4096); !errors.Is(err, ErrDuplicatePayment) {
+			t.Fatalf("duplicate ids in one call must fail, got %v", err)
+		}
+		if s.HasWallet(buyer) {
+			t.Fatal("rejected mint must not create the buyer")
+		}
+	})
+}
