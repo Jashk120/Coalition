@@ -599,21 +599,22 @@ export default function DashboardPage() {
     }
   }, [loadAgents, loadActivity, loadUsage]);
 
-  // Resale only exists once funding settles AND someone actually holds
-  // spare: an open pool (or fully-used allocations) has nothing to sell,
-  // so the section stays hidden instead of showing no-quota rows and a
-  // plan form that can only 409. Market polling continues while hidden
-  // so the section appears as soon as spare lands.
+  // Resale shows whenever someone actually holds spare: an empty market
+  // (no allocations, or fully-used slices) has nothing to sell, so the
+  // section stays hidden instead of showing no-quota rows and a plan form
+  // that can only 409. No settled requirement — the orchestrator settles
+  // quota pre-settle too; only the funding endpoints close. A market
+  // backend error stays visible so failures are diagnosable. Market polling
+  // continues while hidden so the section appears as soon as spare lands.
   const resaleLive =
-    usage.status === "ready" &&
-    usage.settled &&
-    market.status === "ready" &&
-    market.entries.some(
-      (entry) =>
-        entry.empty !== true &&
-        (hasSpareAmount(entry.availableMB) ||
-          hasSpareAmount(entry.availableCU)),
-    );
+    market.status === "error" ||
+    (market.status === "ready" &&
+      market.entries.some(
+        (entry) =>
+          entry.empty !== true &&
+          (hasSpareAmount(entry.availableMB) ||
+            hasSpareAmount(entry.availableCU)),
+      ));
 
   return (
     <main>

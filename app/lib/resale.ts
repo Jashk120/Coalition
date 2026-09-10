@@ -8,7 +8,8 @@ import {
   CompositeEvmScheme,
   registerBatchScheme,
 } from "@circle-fin/x402-batching/client";
-import { OUTSIDE_BUYER } from "./constants";
+import { OUTSIDE_BUYER, RESALE_GATEWAY_WALLET, RESALE_USDC_ADDRESS } from "./constants";
+import { createCircleClient, executeContractAndWait } from "./circle-fund";
 
 /**
  * Resale shared shapes + buyer signer. Server-only: touches Circle creds.
@@ -110,6 +111,13 @@ export function readBuyerEnv(): BuyerEnv {
   };
 }
 
+const EIP712_DOMAIN_FIELDS = [
+  { name: "name", type: "string" },
+  { name: "version", type: "string" },
+  { name: "chainId", type: "uint256" },
+  { name: "verifyingContract", type: "address" },
+] as const;
+
 function jsonSafe(value: unknown): unknown {
   if (typeof value === "bigint") return value.toString();
   if (Array.isArray(value)) return value.map(jsonSafe);
@@ -155,12 +163,28 @@ export function createBuyerAccount(args: {
       if (typeof chainId !== "number")
         throw new Error("typed data domain missing numeric chainId");
       const rawTypes = parameters.types as unknown as Record<string, unknown>;
-      // Pass the scheme's types/domain/message through untouched: the
-      // scheme owns the exact EIP-712 shape the facilitator verifies, so
-      // reconstructing EIP712Domain here risks INVALID_SIGNATURE. The only
-      // transform is bigint-safe jsonSafe for the wire.
+      // Circle's typed-data validator rejects domain fields undeclared in
+      // types ("extra data provided in the message (0 < 4)" when the scheme
+      // omits EIP712Domain): backfill the standard entry only when the
+      // scheme did not supply its own and the domain is exactly the Gateway
+      // shape, otherwise pass through untouched. Verified live against the
+      // sign endpoint. The only other transform is bigint-safe jsonSafe.
+      const types =
+        "EIP712Domain" in rawTypes ||
+        !(
+          Object.keys(domainRecord).length === 4 &&
+          "name" in domainRecord &&
+          "version" in domainRecord &&
+          "chainId" in domainRecord &&
+          "verifyingContract" in domainRecord
+        )
+          ? jsonSafe(rawTypes)
+          : {
+              EIP712Domain: EIP712_DOMAIN_FIELDS,
+              ...(jsonSafe(rawTypes) as Record<string, unknown>),
+            };
       const typedDataJson = JSON.stringify({
-        types: jsonSafe(rawTypes),
+        types,
         primaryType: parameters.primaryType,
         domain: jsonSafe(domainRecord),
         message: jsonSafe(parameters.message as unknown),
@@ -386,4 +410,59 @@ export function parseFillPlan(value: unknown): FillPlanResponse {
 /** cuMicro integers back to CU floats for the transfer-quota legs wire shape. */
 export function legToTransferLeg(leg: FillPlanLeg): TransferQuotaLeg {
   return { seller: leg.wallet, mb: leg.mb, cu: leg.cuMicro / 1e6 };
+}
+
+/**
+ * Parse the CIRCLE_BUYER_AUTOFUND_MAX cap (decimal USDC, max 6dp, e.g.
+ * "10.00") into atomic units. Absent/empty/invalid/zero yields null =
+ * feature OFF, so the buy flow fails exactly as it does today. Server-only.
+ */
+export function parseAutofundCapAtomic(raw: string | undefined): bigint | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  const trimmed = raw.trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(trimmed)) return null;
+  const dot = trimmed.indexOf(".");
+  const intPart = dot === -1 ? trimmed : trimmed.slice(0, dot);
+  const fracPart = dot === -1 ? "" : trimmed.slice(dot + 1);
+  const digits = `${intPart}${fracPart.padEnd(6, "0")}`.replace(/^0+(?=\d)/, "");
+  const value = digits === "" ? 0n : BigInt(digits);
+  return value <= 0n ? null : value;
+}
+
+export type TopUpGatewayResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * Server-only one-shot Gateway top-up: wallet → own-Gateway only, never a
+ * third party. Replicates app/fund-buyer-gateway.mjs (USDC approve then
+ * GatewayWallet.deposit via Circle contract execution, polled to a terminal
+ * state by executeContractAndWait) with NO local key and no secret logging.
+ * amountAtomic is a positive 6-decimal atomic USDC string.
+ */
+export async function topUpGateway(args: {
+  readonly apiKey: string;
+  readonly entitySecret: string;
+  readonly buyerWalletId: string;
+  readonly amountAtomic: string;
+}): Promise<TopUpGatewayResult> {
+  if (!UINT_PATTERN.test(args.amountAtomic) || BigInt(args.amountAtomic) <= 0n) {
+    return { ok: false, error: "top-up amount must be a positive atomic string" };
+  }
+  const client = createCircleClient(args.apiKey, args.entitySecret);
+  const approve = await executeContractAndWait(client, {
+    walletId: args.buyerWalletId,
+    contractAddress: RESALE_USDC_ADDRESS,
+    abiFunctionSignature: "approve(address,uint256)",
+    abiParameters: [RESALE_GATEWAY_WALLET, args.amountAtomic],
+  });
+  if (!approve.ok) return { ok: false, error: approve.error };
+  const deposit = await executeContractAndWait(client, {
+    walletId: args.buyerWalletId,
+    contractAddress: RESALE_GATEWAY_WALLET,
+    abiFunctionSignature: "deposit(address,uint256)",
+    abiParameters: [RESALE_USDC_ADDRESS, args.amountAtomic],
+  });
+  if (!deposit.ok) return { ok: false, error: deposit.error };
+  return { ok: true };
 }
