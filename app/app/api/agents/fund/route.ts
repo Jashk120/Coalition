@@ -31,10 +31,29 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Allocate with patience: the orchestrator's round tracker can lag a fresh
- * round behind the chain, wrongly 409ing the first attempts. Three tries
- * ~8s apart ride out the lag; a settled round with real stake succeeds on
- * retry once the tracker catches up.
+ * round behind the chain, wrongly 409ing the first attempts. Poll about
+ * every 750ms (up to ~12s total) and retry only round-lag 409s; a settled
+ * round with real stake succeeds once the tracker catches up, usually in
+ * ~1-3s. All other errors fail fast with no extra delay.
  */
+function isRoundLagError(error: string | undefined): boolean {
+  if (error === undefined) return false;
+  const lower = error.toLowerCase();
+  return (
+    lower.includes("409") || lower.includes("round") || lower.includes("settled")
+  );
+}
+
+function isTerminalSettleDenial(error: string | undefined): boolean {
+  if (error === undefined) return false;
+  const lower = error.toLowerCase();
+  return (
+    lower.includes("allocations are final") ||
+    lower.includes("pool_settled") ||
+    (lower.includes("pool settled") && lower.includes("final"))
+  );
+}
+
 async function allocateWithRetry(
   client: Parameters<typeof getWalletAddress>[0],
   walletId: string,
@@ -45,16 +64,20 @@ async function allocateWithRetry(
   const wallet = funderAddress ?? seed?.wallet ?? walletId;
   const cpu = seed?.cpu ?? 0.1;
   const memMB = seed?.memMB ?? 400;
+  const deadline = Date.now() + 12_000;
   let last: { readonly ok: boolean; readonly error?: string } = {
     ok: false,
     error: "no attempts",
   };
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await sleep(8_000);
+  for (;;) {
     last = await allocateSlice(wallet, cpu, memMB);
     if (last.ok) return last;
+    if (isTerminalSettleDenial(last.error)) return last;
+    if (!isRoundLagError(last.error)) return last;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return last;
+    await sleep(Math.min(750, remaining));
   }
-  return last;
 }
 
 /**

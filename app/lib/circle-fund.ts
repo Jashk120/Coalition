@@ -99,7 +99,8 @@ const FAILURE_STATES: readonly string[] = [
   "STUCK",
 ];
 
-const POLL_INTERVAL_MS = 2_000;
+const POLL_INTERVAL_MS = 1_000;
+const POLL_JITTER_MS = 250;
 const POLL_TIMEOUT_MS = 120_000;
 
 function errorMessage(error: unknown): string {
@@ -180,7 +181,7 @@ export async function executeContractAndWait(
     } catch (error) {
       lastState = `poll error: ${errorMessage(error)}`;
     }
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(POLL_INTERVAL_MS + Math.floor(Math.random() * (POLL_JITTER_MS + 1)));
   }
   return {
     ok: false,

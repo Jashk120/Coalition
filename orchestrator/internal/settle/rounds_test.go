@@ -411,6 +411,41 @@ func Test_ReadRoundViews_rejects_bad_round(t *testing.T) {
 	}
 }
 
+func Test_Rounds_same_address_skips_legacy_flow(t *testing.T) {
+	shared := "0x8B9f9e8B9f9E8b9F9e8B9f9E8b9F9e8B9F9e8B9F"
+	rig := &roundRig{
+		head:         "0x20",
+		currentRound: "0x5",
+		tuples: map[string]string{
+			uintHex(5): roundTuple(10000000, 9999999999, 1, 0),
+		},
+		expired:      map[string]string{uintHex(5): "0x0"},
+		participants: map[string]string{uintHex(5): "0x0"},
+		logs:         settledLogAt("0x20"),
+	}
+	srv := rig.serve(t)
+	ledger := store.NewStore(72)
+	l := NewListener(srv.URL, shared, time.Millisecond, ledger, discardLogger(),
+		WithV2Pool("0x8b9f9e8b9f9e8b9f9e8b9f9e8b9f9e8b9f9e8b9f"), WithConfirmations(1))
+
+	flipped, err := l.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if flipped {
+		t.Fatal("unfunded v2 round must not flip")
+	}
+	if ledger.IsSettled() {
+		t.Fatal("same-address Check must never flip the permanent v1 settled flag via the legacy path")
+	}
+	if got := ledger.CurrentRound(); got == nil || got.Cmp(big.NewInt(5)) != 0 {
+		t.Fatalf("CurrentRound = %v, want 5 (v2 flow still runs)", got)
+	}
+	if tracked := l.trackedV2Round(); tracked == nil || tracked.Cmp(big.NewInt(5)) != 0 {
+		t.Fatalf("tracked = %v, want 5 (v2 flow still runs)", tracked)
+	}
+}
+
 func Test_ReadCommitted_round_trip_and_validation(t *testing.T) {
 	const wallet = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
 	var gotData string

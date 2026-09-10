@@ -193,14 +193,23 @@ func (l *Listener) Run(ctx context.Context) error {
 // Check performs one poll round across the v1 pool and, when configured,
 // the v2 round-scoped pool. It reports whether this call transitioned either
 // ledger. An empty v1 pool address skips the legacy flow (v2-only mode);
-// polling continues harmlessly after settle on both.
+// when the v1 pool address equals the v2 pool address (case-insensitive,
+// same contract) the legacy flow is also skipped: the v1 settled() getter
+// mirrors the current round and its Settled(uint256) log fires alongside the
+// v2 Settled(uint256,uint256), so the legacy gate/log scan would flip the
+// permanent v1 settled flag on a shared address and pin FundingClosed() true
+// forever across rotates. Polling continues harmlessly after settle on both.
 func (l *Listener) Check(ctx context.Context) (bool, error) {
 	latest, err := l.blockNumber(ctx)
 	if err != nil {
 		return false, err
 	}
 	flipped := false
-	if l.pool != "" {
+	switch {
+	case l.pool == "":
+	case l.v2pool != "" && strings.EqualFold(l.pool, l.v2pool):
+		l.logger.Warn("legacy-skipped-same-as-v2", slog.String("pool", l.pool))
+	default:
 		flipped, err = l.checkLegacy(ctx, latest)
 		if err != nil {
 			return flipped, err
