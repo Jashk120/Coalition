@@ -720,7 +720,12 @@ func (s *Store) Reserve(w domain.WalletAddress, cpuMicro, memMB int64, cap Admit
 }
 
 // ConfirmReserve commits a reservation after the container was created: it
-// clears the pending flag and binds the container ID.
+// clears the pending flag and binds the container ID. When the reservation
+// crossed a funding round (pre-Reserve round differs from the confirm-time
+// round, after the allocate-path chain pin), billed usage and inflight are
+// zeroed so the re-funded wallet starts the new round with a fresh budget.
+// Reset lives here — not in Reserve — so a rolled-back reservation never
+// loses burn history.
 func (s *Store) ConfirmReserve(w domain.WalletAddress, containerID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -729,6 +734,10 @@ func (s *Store) ConfirmReserve(w domain.WalletAddress, containerID string) error
 		return fmt.Errorf("wallet %s has no pending reservation: %w", w.String(), ErrUnknownWallet)
 	}
 	r.pending = false
+	if r.prevRound != nil && r.roundId != nil && r.prevRound.Cmp(r.roundId) != 0 {
+		r.usage = domain.Usage{}
+		r.inflight = nil
+	}
 	r.prevExists = false
 	r.prevRound = nil
 	r.containerID = containerID

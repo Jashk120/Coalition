@@ -610,6 +610,83 @@ func Test_Round_reserve_stamps_and_rollback_restores(t *testing.T) {
 	}
 }
 
+func Test_RoundChange_confirm_resets_usage(t *testing.T) {
+	cap := AdmitCap{TotalCPUMicro: MicroCU(1), TotalMemMB: 4096, MaxAgents: 5}
+	s := NewStore(72)
+	s.SetCurrentRound(big.NewInt(6))
+	w := mustWallet(t, testWalletA)
+	if _, err := s.Reserve(w, MicroCU(0.2), 800, cap); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if err := s.ConfirmReserve(w, "c1"); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if err := s.BeginExec(w); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := s.EndExec(w, 100, 200); err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	if err := s.BeginExec(w); err != nil {
+		t.Fatalf("begin (open inflight): %v", err)
+	}
+	if u, err := s.Usage(w); err != nil || u.CUSeconds != 100 || u.MBHours != 200 {
+		t.Fatalf("Usage = %+v, %v; want 100/200", u, err)
+	}
+	// New round: re-allocate + confirm must zero burn and drop inflight.
+	s.SetCurrentRound(big.NewInt(7))
+	if _, err := s.Reserve(w, MicroCU(0.2), 800, cap); err != nil {
+		t.Fatalf("re-reserve: %v", err)
+	}
+	if err := s.ConfirmReserve(w, "c2"); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if u, err := s.Usage(w); err != nil || u.CUSeconds != 0 || u.MBHours != 0 {
+		t.Fatalf("round-change confirm must zero usage, got %+v, %v", u, err)
+	}
+	if n := len(s.wallets[w.String()].inflight); n != 0 {
+		t.Fatalf("round-change confirm must clear inflight, got %d", n)
+	}
+	if err := s.BeginExec(w); err != nil {
+		t.Fatalf("fresh-round BeginExec must pass: %v", err)
+	}
+	if err := s.EndExec(w, 0, 0); err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	// Same-round re-reserve keeps burn untouched.
+	if err := s.EndExec(w, 50, 60); err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	if _, err := s.Reserve(w, MicroCU(0.2), 800, cap); err != nil {
+		t.Fatalf("same-round re-reserve: %v", err)
+	}
+	if err := s.ConfirmReserve(w, "c3"); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if u, err := s.Usage(w); err != nil || u.CUSeconds != 50 || u.MBHours != 60 {
+		t.Fatalf("same-round confirm must preserve burn, got %+v, %v", u, err)
+	}
+	// Rollback never loses burn history, same round or across rounds.
+	if _, err := s.Reserve(w, MicroCU(0.5), 1000, cap); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	s.RollbackReserve(w)
+	if u, err := s.Usage(w); err != nil || u.CUSeconds != 50 || u.MBHours != 60 {
+		t.Fatalf("rollback must preserve burn, got %+v, %v", u, err)
+	}
+	s.SetCurrentRound(big.NewInt(8))
+	if _, err := s.Reserve(w, MicroCU(0.5), 1000, cap); err != nil {
+		t.Fatalf("cross-round reserve: %v", err)
+	}
+	s.RollbackReserve(w)
+	if u, err := s.Usage(w); err != nil || u.CUSeconds != 50 || u.MBHours != 60 {
+		t.Fatalf("cross-round rollback must preserve burn, got %+v, %v", u, err)
+	}
+	if got, err := s.WalletRound(w); err != nil || got == nil || got.Cmp(big.NewInt(7)) != 0 {
+		t.Fatalf("cross-round rollback must restore round 7, got %v, %v", got, err)
+	}
+}
+
 func Test_Round_expiry_anchors_to_round_settle(t *testing.T) {
 	s := NewStore(1)
 	cur := time.Now()

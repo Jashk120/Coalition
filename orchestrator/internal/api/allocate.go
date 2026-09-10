@@ -226,6 +226,17 @@ func (s *Server) pinAllocateRound(ctx context.Context, wallet domain.WalletAddre
 // already-burned usage: applying it would manufacture an instantly
 // over-budget wallet with no new spend. Grow-or-hold only.
 func (s *Server) rejectShrink(wallet domain.WalletAddress, ent domain.Entitlement) error {
+	// Round change: the wallet's stamped round differs from the tracked
+	// current round, so the burned usage belongs to the prior round and
+	// resets at ConfirmReserve — comparing it against the fresh
+	// entitlement here would wrongly refuse the re-allocate.
+	if cur := s.ledger.CurrentRound(); cur != nil {
+		if stamped, err := s.ledger.WalletRound(wallet); err == nil {
+			if stamped == nil || stamped.Cmp(cur) != 0 {
+				return nil
+			}
+		}
+	}
 	usage, err := s.ledger.Usage(wallet)
 	if err != nil {
 		return nil
