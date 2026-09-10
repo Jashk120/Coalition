@@ -223,8 +223,14 @@ cast call <UR-proxy> "resolve(bytes,bytes)" <dnsName> <data> --rpc-url $SEPOLIA_
 
 ## 12. Re-check-required items (live fetch failed or time-sensitive)
 
+> 2026-09-10 update: UR resolution re-verified live
+> (`https://ethereum-sepolia-rpc.publicnode.com`) — `agent1..4.agentpool.eth`
+> 4/4 MATCH to seed Arc wallets via shared resolver `0x2f60…9973`; parent
+> `agentpool.eth` resolves (no Arc record, as expected). Receipts, EAC grant
+> state, and registrar-side owner/tokenId still open. See `ENS.md` §3.
+
 - [ ] Which generation (pin `97a57293` vs HEAD `0x118b…` factory family) the UR proxy + app.ens.dev serve at demo time.
-- [ ] `agentpool.eth` availability/owner on the live `ETHRegistry`/`ETHRegistrar` (v1-style `available(string)` reverts on v2 — use Explorer or v2 ABI).
+- [x] `agentpool.eth` + `agent1..4` resolve via the UR proxy at demo time (verified 2026-09-10: 4/4 MATCH, parent resolves with no Arc record). Still open: registrar-side availability/owner on the live `ETHRegistry`/`ETHRegistrar` generation that owns registry `0x365d…e1dc34` (v1-style `available(string)` reverts on v2 — use Explorer or v2 ABI).
 - [ ] Live `VerifiableFactory` address as explicit per-call input (DO NOT hardcode).
 - [ ] Live `MockUSDC` address + exact parent fee from live price oracle.
 - [ ] Write-function selectors vs `contracts-v2` HEAD (`register`, `authorizeAddrRoles`, `setAddr`, `deployProxy`).
