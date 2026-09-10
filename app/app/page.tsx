@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { DEFAULT_IDENTITY_REGISTRY } from "@jx-nexus/coalition";
 import { EXPLORER_URL, OUTSIDE_BUYER, SEED_META } from "@/lib/constants";
 import type {
@@ -240,6 +241,15 @@ export default function DashboardPage() {
   const [wantCu, setWantCu] = useState("0.05");
   const [plan, setPlan] = useState<PlanState>({ status: "idle" });
   const [buy, setBuy] = useState<BuyState>({ status: "idle" });
+  const [walletNames, setWalletNames] = useState<ReadonlyMap<string, string>>(
+    new Map(),
+  );
+
+  const displayAgent = (address: string): ReactNode => {
+    const name =
+      walletNames.get(address.toLowerCase()) ?? shortAddress(address);
+    return <span title={address}>{name}</span>;
+  };
 
   const loadAgents = useCallback(async () => {
     try {
@@ -313,6 +323,35 @@ export default function DashboardPage() {
         status: "error",
         message: error instanceof Error ? error.message : String(error),
       });
+    }
+  }, []);
+
+  const loadWallets = useCallback(async () => {
+    try {
+      const response = await fetch("/api/agents/wallets", {
+        cache: "no-store",
+      });
+      const body = (await parseJson(response)) as
+        | {
+            readonly ok: true;
+            readonly names: readonly {
+              readonly address: string;
+              readonly ensName: string;
+            }[];
+          }
+        | { readonly ok: false; readonly error: string };
+      if (body.ok) {
+        setWalletNames(
+          new Map(
+            body.names.map((entry) => [
+              entry.address.toLowerCase(),
+              entry.ensName,
+            ]),
+          ),
+        );
+      }
+    } catch {
+      return;
     }
   }, []);
 
@@ -551,10 +590,11 @@ export default function DashboardPage() {
     void loadActivity();
     void loadTerms();
     void loadMarket();
+    void loadWallets();
     return () => {
       cancelled = true;
     };
-  }, [loadActivity, loadMarket]);
+  }, [loadActivity, loadMarket, loadWallets]);
 
   const freePool = useCallback(async () => {
     if (
@@ -678,7 +718,7 @@ export default function DashboardPage() {
               <tbody>
                 {market.entries.map((entry) => (
                   <tr key={entry.wallet}>
-                    <td className="mono">{shortAddress(entry.wallet)}</td>
+                    <td className="mono">{displayAgent(entry.wallet)}</td>
                     <td>
                       {entry.empty === true ? (
                         <span className="state">
@@ -757,7 +797,7 @@ export default function DashboardPage() {
               <tbody>
                 {plan.plan.sellers.map((leg) => (
                   <tr key={leg.wallet}>
-                    <td className="mono">{shortAddress(leg.wallet)}</td>
+                    <td className="mono">{displayAgent(leg.wallet)}</td>
                     <td className="mono">{leg.mb}</td>
                     <td className="mono">{leg.cuMicro}</td>
                     <td className="mono">{formatUsdc(leg.amountAtomic)}</td>
@@ -780,7 +820,7 @@ export default function DashboardPage() {
           <div className="state">
             Bought {buy.result.legsPaid} leg(s) for{" "}
             {formatUsdc(buy.result.totalAtomic)} USDC — buyer{" "}
-            <span className="mono">{shortAddress(buy.result.buyer)}</span>{" "}
+            <span className="mono">{displayAgent(buy.result.buyer)}</span>{" "}
             holds quota (see Live Compute Usage).
             {buy.result.toToken !== undefined ? (
               <div className="mono">token {buy.result.toToken}</div>
@@ -863,7 +903,7 @@ export default function DashboardPage() {
               <tbody>
                 {fundSteps.map((step) => (
                   <tr key={step.walletId}>
-                    <td className="mono">{shortAddress(step.walletId)}</td>
+                    <td className="mono">{displayAgent(step.walletId)}</td>
                     <td>
                       <span
                         className={
@@ -1016,7 +1056,7 @@ export default function DashboardPage() {
                     const overBudget = livePctCU >= 100 || livePctMB >= 100;
                     return (
                       <tr key={agent.wallet}>
-                        <td className="mono">{shortAddress(agent.wallet)}</td>
+                        <td className="mono">{displayAgent(agent.wallet)}</td>
                         <td>
                           {agent.cpu.toFixed(2)} CPU · {agent.memMB} MB
                         </td>
@@ -1420,7 +1460,7 @@ export default function DashboardPage() {
                     </td>
                     <td className="mono">
                       {event.kind === "committed"
-                        ? shortAddress(event.agent)
+                        ? displayAgent(event.agent)
                         : "—"}
                     </td>
                     <td>
