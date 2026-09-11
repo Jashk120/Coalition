@@ -17,7 +17,11 @@ COPY sdk ./sdk
 RUN npm --prefix sdk ci && npm --prefix sdk run build
 
 COPY app ./app
-RUN npm --prefix app ci
+# Circle's Solana adapter pulls @solana/kit@5, while
+# @circle-fin/developer-controlled-wallets peer-optionally pins
+# @solana/codecs-strings@^2; the app never uses Solana, so resolve peers
+# leniently (mirrors app/.npmrc) for install and prune.
+RUN npm --prefix app ci --legacy-peer-deps
 
 ARG NEXT_PUBLIC_POOL_ADDRESS=0x8b9f38c7B005Dd67203e27240F45335a9e64F692
 ARG NEXT_PUBLIC_CHAIN_ID=5042002
@@ -28,7 +32,7 @@ ENV NEXT_PUBLIC_POOL_ADDRESS=$NEXT_PUBLIC_POOL_ADDRESS \
     NEXT_PUBLIC_ORCHESTRATOR_URL=$NEXT_PUBLIC_ORCHESTRATOR_URL \
     NEXT_PUBLIC_EXPLORER_URL=$NEXT_PUBLIC_EXPLORER_URL
 RUN npm --prefix app run build
-RUN npm --prefix app prune --omit=dev
+RUN npm --prefix app prune --omit=dev --legacy-peer-deps
 
 EXPOSE 3000
 ENV PORT=3000 HOSTNAME=0.0.0.0 NODE_ENV=production
