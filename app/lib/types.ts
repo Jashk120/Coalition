@@ -254,13 +254,15 @@ export type EnsDelegateResponse =
     }
   | { readonly ok: false; readonly error: string };
 
-/** One USDC transfer from the App Kit treasury (POST /api/agents/treasury). */
+/** One USDC top-up from the App Kit treasury (POST /api/agents/treasury). */
 export type TreasurySendStep = {
   readonly to: string;
   readonly amountUsdc: string;
   readonly state: "success" | "pending" | "error" | "noop";
   readonly txHash: string | null;
   readonly explorerUrl: string | null;
+  readonly balanceAtomic?: string;
+  readonly reason?: string;
   readonly error?: string;
 };
 

@@ -59,9 +59,11 @@ only by `deploy-pool-circle.mjs`) default to `CIRCLE_PROVIDER_WALLET_ID`.
   returns `FundStep` lines with on-chain hashes, 503 without `CIRCLE_*` env.
   Each funded wallet also provisions its orchestrator slice (see Fund flow).
 - `POST /api/agents/treasury` — App Kit (`@circle-fin/app-kit` + Circle Wallets
-  adapter) USDC funding from `CIRCLE_TREASURY_WALLET_ID` on Arc Testnet via
-  `kit.send`. Body `{to?, amountUsdc?}`: one send when `to` is given, else a
-  fan-out to every `CIRCLE_WALLET_IDS` wallet; returns per-recipient steps.
+  adapter) re-funds agents for the next round from `CIRCLE_TREASURY_WALLET_ID`
+  via `kit.send`. Body `{to?, amountUsdc?}`: tops each recipient up to
+  `amountUsdc` (default 2.50) only when its on-chain USDC balance is below that,
+  skipping already-funded wallets; fan-out targets every `CIRCLE_WALLET_IDS`
+  funder, or one wallet when `to` is given.
 - `GET /api/activity` — pool `Committed` + `Settled` + `RoundStarted` events
   (chunked log scan from the pool deploy block), newest first; empty before
   the first commit. Served from a 60s server cache that goes stale instead
@@ -97,13 +99,15 @@ a funded step to failed (the money moved, it is only recorded on the step).
 
 ## Treasury rail (`lib/appkit.ts`, `api/agents/treasury/route.ts`)
 
-Circle App Kits fund wallets but cannot call contracts, so this is the funding
-half only: `kit.send` moves USDC from the treasury DCW
-(`CIRCLE_TREASURY_WALLET_ID`) to recipients on Arc Testnet, while
-`/api/agents/fund` keeps doing the DCW `approve` + `pool.commit`. The route
-fans out over `CIRCLE_WALLET_IDS` by default, or sends once when `to` is
-supplied, and returns each `BridgeStep`'s state, tx hash, and explorer URL.
-Hard errors resolve per recipient instead of aborting the fan-out.
+After a round settles, the agents' USDC is in the pool (paid out to the
+provider), so a fresh round needs fresh agent balances. This rail recycles the
+provider's settle payout back to the agents: `kit.send` (Circle App Kits +
+Circle Wallets adapter) reads each recipient's on-chain USDC balance and tops
+it up to `CIRCLE_TREASURY_FUND_USDC` (default 2.50, plus a small Arc gas
+buffer) only when it is below that target — already-funded wallets are skipped,
+so it is idempotent. It fans out over `CIRCLE_WALLET_IDS` (never the treasury
+itself) or targets one wallet via `to`. App Kit cannot call contracts, so
+`/api/agents/fund` keeps doing the DCW `approve` + `pool.commit`.
 
 ## Round reads (`lib/pool-state.ts`)
 

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import { erc20Abi } from "viem";
+import { fromAtomicUsdc, toAtomicUsdc } from "@jx-nexus/coalition";
 import {
+  USDC_ADDRESS,
   createCircleClient,
   getWalletAddress,
   readCircleEnv,
@@ -9,6 +12,7 @@ import {
   readTreasuryEnv,
   sendUsdcFromTreasury,
 } from "@/lib/appkit";
+import { arcPublicClient } from "@/lib/chain";
 import { log } from "@/lib/logger";
 import type { TreasuryResponse, TreasurySendStep } from "@/lib/types";
 
@@ -17,17 +21,26 @@ export const runtime = "nodejs";
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 const USDC_DECIMAL_PATTERN = /^\d+(\.\d{1,6})?$/;
+/** Arc gas is USDC, so keep a small buffer above the target commit amount. */
+const GAS_HEADROOM_ATOMIC = 100_000n;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
- * POST /api/agents/treasury — fund Arc Testnet wallets from a Circle
- * developer-controlled treasury using Circle App Kits `kit.send` (same-chain
- * USDC). Body `{ to?, amountUsdc? }`: with `to`, sends once; without, fans out
- * to every CIRCLE_WALLET_IDS funding wallet. Funding only — App Kit cannot call
- * the pool, so /api/agents/fund's DCW approve + commit path is unchanged.
+ * POST /api/agents/treasury — re-fund agents for the next funding round from
+ * the provider/treasury wallet via Circle App Kits `kit.send`. Each recipient
+ * is topped up to `amountUsdc` (default CIRCLE_TREASURY_FUND_USDC, else 2.50)
+ * only when its on-chain USDC balance is below that target; already-funded
+ * wallets are skipped. Body `{ to?, amountUsdc? }`: `to` targets one wallet,
+ * otherwise it fans out to every CIRCLE_WALLET_IDS funder (never the treasury
+ * itself). Funding only — App Kit cannot call the pool, so the DCW approve +
+ * commit path in /api/agents/fund is unchanged.
  */
 export async function POST(
   request: Request,
@@ -98,32 +111,71 @@ export async function POST(
     );
   }
 
+  const targetAtomic = toAtomicUsdc(amountUsdc) + GAS_HEADROOM_ATOMIC;
+  const targetUsdc = fromAtomicUsdc(targetAtomic);
   log("info", "agents.treasury.start", {
     route: "POST /api/agents/treasury",
     treasury: treasuryAddress,
     recipients: recipients.length,
-    amountUsdc,
+    targetUsdc,
   });
 
+  const publicClient = arcPublicClient();
   const sends: TreasurySendStep[] = [];
   for (const recipient of recipients) {
-    sends.push(
-      await sendUsdcFromTreasury({
-        apiKey: env.apiKey,
-        entitySecret: env.entitySecret,
-        fromAddress: treasuryAddress,
+    let balance: bigint;
+    try {
+      balance = await publicClient.readContract({
+        address: USDC_ADDRESS,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [recipient as `0x${string}`],
+      });
+    } catch (error) {
+      sends.push({
         to: recipient,
-        amountUsdc,
-      }),
-    );
+        amountUsdc: "0",
+        state: "error",
+        txHash: null,
+        explorerUrl: null,
+        error: `balance read failed: ${errorMessage(error)}`,
+      });
+      continue;
+    }
+    if (balance >= targetAtomic) {
+      sends.push({
+        to: recipient,
+        amountUsdc: "0",
+        balanceAtomic: balance.toString(),
+        state: "noop",
+        txHash: null,
+        explorerUrl: null,
+        reason: `already ${fromAtomicUsdc(balance)} >= target ${targetUsdc}`,
+      });
+      continue;
+    }
+    const step = await sendUsdcFromTreasury({
+      apiKey: env.apiKey,
+      entitySecret: env.entitySecret,
+      fromAddress: treasuryAddress,
+      to: recipient,
+      amountUsdc: fromAtomicUsdc(targetAtomic - balance),
+    });
+    sends.push({
+      ...step,
+      balanceAtomic: balance.toString(),
+      reason: `topped up ${fromAtomicUsdc(balance)} -> ${targetUsdc}`,
+    });
   }
 
   const sent = sends.filter((step) => step.state === "success").length;
+  const skipped = sends.filter((step) => step.state === "noop").length;
   log("info", "agents.treasury.complete", {
     route: "POST /api/agents/treasury",
     sent,
-    failed: sends.length - sent,
-    amountUsdc,
+    skipped,
+    failed: sends.length - sent - skipped,
+    targetUsdc,
   });
 
   return NextResponse.json({
