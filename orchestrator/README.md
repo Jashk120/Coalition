@@ -70,7 +70,7 @@ Three tiers, enforced in the router (not per-handler), independent — never
 stacked:
 
 - **Public, no auth** — `GET /healthz`, `GET /terms.json`, `GET /quote`,
-  `POST /fill-plan`. `terms.json` stays world-readable by design: it is the
+  `GET /capacity`, `POST /fill-plan`. `terms.json` stays world-readable by design: it is the
   on-chain `resourceURI` pointer target, so anyone verifying the pool must be
   able to fetch it. `/quote` and `/fill-plan` stay open because buyers are
   external agents without tokens — price discovery must work before anyone
@@ -272,6 +272,28 @@ the remaining slice in MB and micro-CU (cores × 1e6, floored — fractional cor
 can never cross as a bare float); `availableMBHours`/`availableCUSeconds`
 are the matching time-spread budgets (entitlement × window minus usage).
 Unknown seller returns 404; expired-unfilled pool returns 409 `pool_closed`.
+
+### GET /capacity — pool-global remaining capacity
+
+```sh
+curl -s localhost:8080/capacity
+# {"totals":{"cpu":1,"memMB":4096,"maxAgents":5,"windowHours":72},
+#  "headroom":{"headroomMB":3296,"headroomCUMicro":800000},
+#  "rates":{"ratePerMBAtomic":"1220","ratePerCUAtomic":"5000000"},
+#  "sellers":[{"wallet":"0x7099...","availableMB":"800","availableCU":"200000",
+#               "remainingMBHours":"57600","remainingCUSeconds":"51840"}],
+#  "settled":false,"roundId":"7"}
+```
+
+Public (no auth), read-only. Reports what external buyers can reason over
+before buying: configured `totals`, unreserved pool `headroom` (totals minus
+the sum of every recorded entitlement, floored at zero), the cost-basis
+`rates` shared with `/quote`, and per-wallet `sellers` supply (the
+`/quote`-style slice remainder plus time-spread budgets). Like `/usage` —
+not `/quote` — it is deliberately NOT behind the pool gate, so spare
+capacity stays visible after expiry; `settled` carries the ledger-wide
+funding flag and `roundId` the tracked current round (`"0"` when no round
+was ever observed).
 
 ### POST /transfer-quota — shift entitlement between wallets
 
