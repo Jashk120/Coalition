@@ -38,7 +38,7 @@ function errorMessage(error: unknown): string {
  * is topped up to `amountUsdc` (default CIRCLE_TREASURY_FUND_USDC, else 2.50)
  * only when its on-chain USDC balance is below that target; already-funded
  * wallets are skipped. Body `{ to?, amountUsdc? }`: `to` targets one wallet,
- * otherwise it fans out to the self-custody agent wallets in `SEED_META`
+ * otherwise it fans out to the agent Circle funder wallets in `SEED_META`
  * (never the treasury itself). Funding only — App Kit cannot call the pool, so
  * the viem approve + commit path in /api/agents/fund signs with the agents'
  * own keys.

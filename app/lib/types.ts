@@ -143,7 +143,7 @@ export type RosterResponse =
   | { readonly ok: false; readonly error: string };
 
 export type FundStep = {
-  /** The agent's ENS-attested self-custody wallet address. */
+  /** The agent's ENS-attested Circle funder wallet address. */
   readonly wallet: string;
   readonly decision: "funded" | "skipped" | "failed";
   readonly reason: string;

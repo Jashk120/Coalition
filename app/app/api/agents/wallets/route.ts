@@ -20,7 +20,7 @@ let cache: { readonly at: number; readonly names: readonly WalletName[] } | null
 
 /**
  * GET /api/agents/wallets — address → ENS name map for the agent actors the
- * dashboard displays. Static self-custody wallets (SEED_META) plus the
+ * dashboard displays. Static agent Circle funder wallets (SEED_META) plus the
  * held-out resale buyer. Addresses + names only — never secrets.
  */
 export async function GET(): Promise<NextResponse<WalletsResponse>> {
