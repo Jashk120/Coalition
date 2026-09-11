@@ -35,6 +35,12 @@ function sleep(ms: number): Promise<void> {
  * every 750ms (up to ~12s total) and retry only round-lag 409s; a settled
  * round with real stake succeeds once the tracker catches up, usually in
  * ~1-3s. All other errors fail fast with no extra delay.
+ *
+ * justFunded widens the retry to terminal settle denials: a wallet whose
+ * commit just settled the round has provable on-chain stake, so the denial
+ * is a poller/RPC convergence lag that clears within seconds. Without it
+ * (repair path for wallets that may never have funded) the terminal denial
+ * still fails fast to avoid a pointless 12s wait.
  */
 function isRoundLagError(error: string | undefined): boolean {
   if (error === undefined) return false;
@@ -58,6 +64,7 @@ async function allocateWithRetry(
   client: Parameters<typeof getWalletAddress>[0],
   walletId: string,
   index: number,
+  justFunded = false,
 ): Promise<{ readonly ok: boolean; readonly error?: string }> {
   const funderAddress = await getWalletAddress(client, walletId);
   const seed = SEED_META[index];
@@ -72,8 +79,9 @@ async function allocateWithRetry(
   for (;;) {
     last = await allocateSlice(wallet, cpu, memMB);
     if (last.ok) return last;
-    if (isTerminalSettleDenial(last.error)) return last;
-    if (!isRoundLagError(last.error)) return last;
+    const terminal = isTerminalSettleDenial(last.error);
+    if (terminal && !justFunded) return last;
+    if (!terminal && !isRoundLagError(last.error)) return last;
     const remaining = deadline - Date.now();
     if (remaining <= 0) return last;
     await sleep(Math.min(750, remaining));
@@ -338,7 +346,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         // participants. Retried: the tracker's round view can lag the commit
         // by seconds. A failed allocate never flips funded to failed —
         // the money moved, so it is only recorded on the step.
-        const allocation = await allocateWithRetry(client, walletId, index);
+        const allocation = await allocateWithRetry(client, walletId, index, true);
         const step: FundStep = {
           walletId,
           decision: "funded",
