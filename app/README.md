@@ -26,11 +26,11 @@ while the orchestrator tracks another. `ARC_RPC_URL` should be a private
 endpoint when available: the public `rpc.testnet.arc.io` free tier 429s
 under the combined polling load (dashboard agents state every 10s, activity
 every 15s, orchestrator usage every 1s, plus the orchestrator settle poller
-at `POLL_INTERVAL` 5s). Agent funding signs with each agent's own keys from
-`~/.coalition/seed-keys.json` (server-only; override with `SEED_KEYS_FILE`);
-each wallet needs Arc USDC for the commit and native USDC for gas
-(faucet.circle.com). Circle (`CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`,
-`CIRCLE_WALLET_IDS`) is used only for the treasury/refund and buyer rails.
+at `POLL_INTERVAL` 5s). Funding needs `CIRCLE_API_KEY`,
+`CIRCLE_ENTITY_SECRET`, and `CIRCLE_WALLET_IDS` (create ARC-TESTNET wallets,
+then fund each wallet with per-wallet USDC via faucet.circle.com; the
+approve passes empty but the commit needs balance). `CIRCLE_WALLET_IDS[i]`
+must resolve to the wallet `agentN.agentpool.eth` points at.
 
 The resale buy flow is server-only as well: `ORCHESTRATOR_APP_KEY` (or
 `APP_KEY`) authorizes the orchestrator `/commit-mint` call, and
@@ -57,23 +57,23 @@ the agents that pay into the pool. `CIRCLE_DEPLOYER_WALLET_ID` (used only by
   `getPoolState` fallback).
 - `POST /api/agents/run` — sequential dry-run decisions gated by
   `wouldExceedTarget`; returns `AgentDecision` lines with null hashes.
-- `POST /api/agents/fund` — headless on-chain funding signed by the agents'
-  own self-custody keys (`~/.coalition/seed-keys.json`; parallel viem USDC
-  approves, strictly sequential pool commits sharing one remainder snapshot,
-  last commit auto-settles); returns `FundStep` lines with on-chain hashes,
-  503 when the keys file is missing. ENS is **mandatory**: before any
-  approve/commit it resolves each signer's `agentN.agentpool.eth` Arc record
-  and requires `funderWallet === ensWallet`; a mismatch or missing record
-  fails the step with no transaction (`ensName`/`ensWallet`/`funderWallet`/
-  `ensAttested` reported per step). Re-point records after key rotation with
-  `node scripts/repoint-ens.mjs` (see [`../ENS.md`](../ENS.md)). Each funded
-  wallet also provisions its orchestrator slice (see Fund flow).
+- `POST /api/agents/fund` — headless on-chain funding via Circle
+  Developer-Controlled Wallets (parallel USDC approves, strictly sequential
+  pool commits sharing one remainder snapshot, last commit auto-settles);
+  returns `FundStep` lines with on-chain hashes, 503 without `CIRCLE_*` env.
+  ENS is **mandatory**: before any approve/commit it resolves each funder's
+  `agentN.agentpool.eth` Arc record and requires
+  `funderWallet === ensWallet`; a mismatch or missing record fails the step
+  with no transaction (`ensName`/`ensWallet`/`funderWallet`/`ensAttested` are
+  reported per step). Align funders first via `node scripts/repoint-ens.mjs`
+  (see [`../ENS.md`](../ENS.md)). Each funded wallet also provisions its
+  orchestrator slice (see Fund flow).
 - `POST /api/agents/treasury` — App Kit (`@circle-fin/app-kit` + Circle Wallets
   adapter) re-funds agents for the next round from `CIRCLE_TREASURY_WALLET_ID`
   via `kit.send`. Body `{to?, amountUsdc?}`: tops each recipient up to
   `amountUsdc` (default 2.50) only when its on-chain USDC balance is below that,
-  skipping already-funded wallets; fan-out targets the `SEED_META` self-custody
-  agent wallets, or one wallet when `to` is given.
+  skipping already-funded wallets; fan-out targets every `CIRCLE_WALLET_IDS`
+  funder, or one wallet when `to` is given.
 - `GET /api/activity` — pool `Committed` + `Settled` + `RoundStarted` events
   (chunked log scan from the pool deploy block), newest first; empty before
   the first commit. Served from a 60s server cache that goes stale instead
@@ -106,19 +106,19 @@ the agents that pay into the pool. `CIRCLE_DEPLOYER_WALLET_ID` (used only by
   orchestrator `/transfer-quota`.
 - `GET /api/terms` — orchestrator `/terms.json` relay.
 
-## Fund flow (`app/api/agents/fund/route.ts`, `lib/seed-keys.ts`)
+## Fund flow (`app/api/agents/fund/route.ts`, `lib/circle-fund.ts`)
 
 Phase 1 gates every wallet against one live round snapshot in seed order
 (splitting the remainder across the wallets still to run, capped at the
 standard share). Phase 2 fires all USDC approves in parallel via
-`Promise.all` (one tx per account, so no shared nonce). Phase 3 commits
-strictly sequentially in seed order: commits share the round remainder and
-the filling one settles inline, so they must not race. Each write is signed by
-the agent's own key and awaited to a receipt. After each commit lands, the
-route provisions that wallet's orchestrator slice; the allocate retries about
-every 750ms up to about 12s on round-tracker-lag 409s only, and fails fast on
-terminal `pool settled: allocations are final` denials. A failed allocate never
-flips a funded step to failed (the money moved, it is only recorded on the step).
+`Promise.all`. Phase 3 commits strictly sequentially in seed order: commits
+share the round remainder and the filling one settles inline, so they must
+not race. Each commit round-trips Circle `getTransaction` at 1s plus jitter
+with a 120s timeout. After each commit lands, the route provisions that
+wallet's orchestrator slice; the allocate retries about every 750ms up to
+about 12s on round-tracker-lag 409s only, and fails fast on terminal
+`pool settled: allocations are final` denials. A failed allocate never flips
+a funded step to failed (the money moved, it is only recorded on the step).
 
 ## Treasury rail (`lib/appkit.ts`, `api/agents/treasury/route.ts`)
 
@@ -128,10 +128,9 @@ provider's settle payout back to the agents: `kit.send` (Circle App Kits +
 Circle Wallets adapter) reads each recipient's on-chain USDC balance and tops
 it up to `CIRCLE_TREASURY_FUND_USDC` (default 2.50, plus a small Arc gas
 buffer) only when it is below that target — already-funded wallets are skipped,
-so it is idempotent. It fans out over the `SEED_META` self-custody agent wallets
-(never the treasury itself) or targets one wallet via `to`. App Kit cannot call
-contracts, so `/api/agents/fund` signs the `approve` + `commit` with the
-agents' own keys.
+so it is idempotent. It fans out over `CIRCLE_WALLET_IDS` (never the treasury
+itself) or targets one wallet via `to`. App Kit cannot call contracts, so
+`/api/agents/fund` keeps doing the DCW `approve` + `pool.commit`.
 
 ## Round reads (`lib/pool-state.ts`)
 

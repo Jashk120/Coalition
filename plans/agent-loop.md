@@ -29,10 +29,10 @@ and never commits.
 
 | # | subname (`ensName`) | wallet (ENS cross-check only, no fallback) | cpu | mem | share |
 |---|---|---|---|---|---|
-| agent-1 | `agent1.agentpool.eth` | `0x0e14d61f2bf9e1a494677257b8855e7ed091d983` | 0.2 | 800 MB | $2.50 = `2500000` atomic |
-| agent-2 | `agent2.agentpool.eth` | `0x253a4751cc35555253666bf90b88ad79b336b079` | 0.15 | 600 MB | $2.50 = `2500000` atomic |
-| agent-3 | `agent3.agentpool.eth` | `0x336e65d480ceff959ea3245f0ade6dac96af0ee8` | 0.1 | 400 MB | $2.50 = `2500000` atomic |
-| agent-4 | `agent4.agentpool.eth` | `0x96ae62a9559dc69f61e07e288ee616e9a6c1bc5f` | 0.25 | 1000 MB | $2.50 = `2500000` atomic |
+| agent-1 | `agent1.agentpool.eth` | `0x4f188f3da697984f0fc02e61fda4a34b00abf39a` | 0.2 | 800 MB | $2.50 = `2500000` atomic |
+| agent-2 | `agent2.agentpool.eth` | `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b` | 0.15 | 600 MB | $2.50 = `2500000` atomic |
+| agent-3 | `agent3.agentpool.eth` | `0xde086aa43915670c74444b3e5a464d992e1f7770` | 0.1 | 400 MB | $2.50 = `2500000` atomic |
+| agent-4 | `agent4.agentpool.eth` | `0x0a6415e892972214bceb0271746cb45932f7eaf1` | 0.25 | 1000 MB | $2.50 = `2500000` atomic |
 
 Held out: `0x2e07588b8180c8235c2a1be7ffa2639545630dd1` (resale buyer,
 optional `agent5.agentpool.eth` — never commits, stays outside the loop).
@@ -225,20 +225,28 @@ Funding requires ENS attestation: `POST /api/agents/fund` resolves each
 or allocate happens for it. `POST /api/agents/run` resolves every seed
 live first under the same rule.
 
-Agents sign with their own self-custody keys (`~/.coalition/seed-keys.json`,
-server-only; override with `SEED_KEYS_FILE`). `POST /api/agents/fund` reads
-those keys, signs `approve` then `commit` with viem, and keeps the ENS
-attestation above — the signer address MUST equal the wallet its subname
-resolves to. USDC `0x3600000000000000000000000000000000000000` (6-dec view);
-`approve(address,uint256)` is sent before every `commit`.
+Agents sign via Circle Developer-Controlled Wallets (`CIRCLE_WALLET_IDS`):
+index `i` maps to `SEED_META[i].ensName`, so `CIRCLE_WALLET_IDS[i]`'s address
+must equal `agentN.agentpool.eth`'s Arc record — `POST /api/agents/fund` runs
+the `approve` then `commit` through Circle and keeps the ENS attestation above.
+USDC `0x3600000000000000000000000000000000000000` (6-dec view).
 
-CLI equivalent (same order, same cap rule — order is agent-1..4):
+CLI equivalent (same order, same cap rule; `--address` is the funder):
 
 ```sh
-SEED_PRIVATE_KEYS="$K1,$K2,$K3,$K4" node sdk/scripts/fund-pool.mjs
+circle wallet execute "approve(address,uint256)" \
+  0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd 2500000 \
+  --contract 0x3600000000000000000000000000000000000000 \
+  --address 0x4f188f3da697984f0fc02e61fda4a34b00abf39a \
+  --chain ARC-TESTNET
+circle wallet execute "commit(uint256)" \
+  2500000 \
+  --contract 0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd \
+  --address 0x4f188f3da697984f0fc02e61fda4a34b00abf39a \
+  --chain ARC-TESTNET
 ```
 
-SDK equivalent:
+Substitute `--address` per seed for agent-2/3/4. SDK equivalent:
 
 ```ts
 import { commitToPool, wouldExceedTarget } from "@jx-nexus/coalition";

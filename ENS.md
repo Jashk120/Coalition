@@ -59,23 +59,23 @@ filled at runtime via `registerAgent`. Live resolution is re-verified below.
 | Name | Arc wallet | Registry state | Expiry (unix) | Resolver | ERC-8004 agentId |
 |---|---|---|---|---|---|
 | `agentpool.eth` (parent) | None (operator-owned) | Status 2 REGISTERED in ETHRegistry `0xbdc85d…0E2`; owner `0x78F31B03De0E6473db80f2Da8c1a1cf5DB44A42a` | 1978259976 | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | None |
-| `agent1.agentpool.eth` | `0x0e14d61f2bf9e1a494677257b8855e7ed091d983` | Status 2 REGISTERED in `0x365d…e1dc34` | 1820412108 | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | Runtime (unverified) |
-| `agent2.agentpool.eth` | `0x253a4751cc35555253666bf90b88ad79b336b079` | Status 2 REGISTERED in `0x365d…e1dc34` | 1820412108 | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | Runtime (unverified) |
-| `agent3.agentpool.eth` | `0x336e65d480ceff959ea3245f0ade6dac96af0ee8` | Status 2 REGISTERED in `0x365d…e1dc34` | 1820412108 | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | Runtime (unverified) |
-| `agent4.agentpool.eth` | `0x96ae62a9559dc69f61e07e288ee616e9a6c1bc5f` | Status 2 REGISTERED in `0x365d…e1dc34` | 1820412108 | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | Runtime (unverified) |
+| `agent1.agentpool.eth` | `0x4f188f3da697984f0fc02e61fda4a34b00abf39a` | Status 2 REGISTERED in `0x365d…e1dc34` | 1820412108 | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | Runtime (unverified) |
+| `agent2.agentpool.eth` | `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b` | Status 2 REGISTERED in `0x365d…e1dc34` | 1820412108 | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | Runtime (unverified) |
+| `agent3.agentpool.eth` | `0xde086aa43915670c74444b3e5a464d992e1f7770` | Status 2 REGISTERED in `0x365d…e1dc34` | 1820412108 | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | Runtime (unverified) |
+| `agent4.agentpool.eth` | `0x0a6415e892972214bceb0271746cb45932f7eaf1` | Status 2 REGISTERED in `0x365d…e1dc34` | 1820412108 | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | Runtime (unverified) |
 
 Held out (never a subname, never commits): resale buyer
 `0x2e07588b8180c8235c2a1be7ffa2639545630dd1`.
 
-> **Re-pointed 2026-09-11.** The Arc records were moved from the original
-> (key-not-held) seed wallets to fresh self-custody wallets whose private keys
-> live at `~/.coalition/seed-keys.json` (mode 600). Four
-> `setAddr(node, 2152525650, …)` writes, all status success and re-resolved to
-> the values above:
-> agent1 `0x4b0dc5bc72c86bf58b25154a5eb65d953851d654ead640e7f59fd8b5ceb4c9ab`,
-> agent2 `0x8c0d7ae7b5c13437ca61a5232ffed205aa65daecb45cb51094b99dd0dc8bafd8`,
-> agent3 `0xdda95228339c766d76de157e37e340ccfc8592edadc11e5ab6c79ae9906ae19e`,
-> agent4 `0x5e9543434a2dc7de5286c089bbdd9f68a8819da68157e749fef9e0e9f496efcc`.
+> **Re-pointed to Circle funders (2026-09-11).** The agents are Circle
+> Developer-Controlled Wallets (`CIRCLE_WALLET_IDS`); the records now resolve to
+> the funder addresses in the table above (index `i` ↔ agent`i+1`), so the
+> wallet the app signs with is the wallet ENS names. Four
+> `setAddr(node, 2152525650, …)` writes, all status success:
+> agent1 `0x7e0674fbfe58d404f9aa5c6571ed22bfe0d5b1854739f16868f128720987cffd`,
+> agent2 `0x224c9605a905aba44fdbe52025c2c751cb59a971739519c944d9b63f90033f0d`,
+> agent3 `0x2bf02ca29fd8861cb908128d32363c2c3554c0bc97a93db325b0338c57a7c661`,
+> agent4 `0xb137974200dfcbd9e1406908d66c306b4ccfa6d45bdd45434d5a515d9f817203`.
 
 ### Live verification (2026-09-11, Sepolia `https://ethereum-sepolia-rpc.publicnode.com`)
 
@@ -212,33 +212,30 @@ current path.
   fund step shows an `"ENS attested"` / `"ENS unattested"` badge with a
   title of the ENS to wallet mapping.
 
-Operator alignment (chosen: self-custody) — **DONE 2026-09-11**. The Arc
-records previously pointed at four seed wallets (`0x0427…`, `0xd1a3…`,
-`0x0728…`, `0x67bc…`) whose private keys were not held and not recoverable
-(Circle never exposes keys; no local key material existed). They were
-re-pointed to four fresh self-custody wallets whose private keys live at
-`~/.coalition/seed-keys.json` (mode 600):
+Operator alignment (chosen: Circle wallets). The agents are Circle
+Developer-Controlled Wallets; `CIRCLE_WALLET_IDS[i]` must resolve to the
+wallet that `SEED_META[i].ensName` points at. Point each `agentN.agentpool.eth`
+at the matching funder (index order):
 
-| agent | ENS name | wallet (self-custody, live) |
+| agent | ENS name | wallet (Circle funder) |
 |---|---|---|
-| agent-1 | `agent1.agentpool.eth` | `0x0e14d61f2bf9e1a494677257b8855e7ed091d983` |
-| agent-2 | `agent2.agentpool.eth` | `0x253a4751cc35555253666bf90b88ad79b336b079` |
-| agent-3 | `agent3.agentpool.eth` | `0x336e65d480ceff959ea3245f0ade6dac96af0ee8` |
-| agent-4 | `agent4.agentpool.eth` | `0x96ae62a9559dc69f61e07e288ee616e9a6c1bc5f` |
+| agent-1 | `agent1.agentpool.eth` | `0x4f188f3da697984f0fc02e61fda4a34b00abf39a` |
+| agent-2 | `agent2.agentpool.eth` | `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b` |
+| agent-3 | `agent3.agentpool.eth` | `0xde086aa43915670c74444b3e5a464d992e1f7770` |
+| agent-4 | `agent4.agentpool.eth` | `0x0a6415e892972214bceb0271746cb45932f7eaf1` |
 
-Re-point command used (owner/resolver-admin `0x78F3…`; keep for future
-rotations — the script prompts for the key, or reads `SEPOLIA_PRIVATE_KEY`):
+Re-point command (owner/resolver-admin `0x78F3…`; the script prompts for the
+key or reads `SEPOLIA_PRIVATE_KEY`):
 
 ```sh
 cd app
-node scripts/repoint-ens.mjs --map agent1=0x0e14d61f2bf9e1a494677257b8855e7ed091d983,agent2=0x253a4751cc35555253666bf90b88ad79b336b079,agent3=0x336e65d480ceff959ea3245f0ade6dac96af0ee8,agent4=0x96ae62a9559dc69f61e07e288ee616e9a6c1bc5f
+node scripts/repoint-ens.mjs --map agent1=0x4f188f3da697984f0fc02e61fda4a34b00abf39a,agent2=0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b,agent3=0xde086aa43915670c74444b3e5a464d992e1f7770,agent4=0x0a6415e892972214bceb0271746cb45932f7eaf1
 ```
 
-The SDK/app seed `wallet` constants expect these addresses, and the on-chain
-records now match. `POST /api/agents/fund` signs with these keys (viem
-`approve` + `commit`, keys read from `~/.coalition/seed-keys.json`) and keeps
-the ENS attestation, so a key whose address the name does not resolve to fails
-closed. Remaining operational step: fund the four wallets with Arc testnet USDC.
+The SDK/app seed `wallet` constants and `demo/agents.seeds.json` carry these
+addresses. `POST /api/agents/fund` signs with these Circle wallets (DCW
+`approve` + `commit`) and keeps the ENS attestation, so a funder the name does
+not resolve to fails closed.
 
 ## 8. Video timestamps + live demo URL
 
@@ -279,10 +276,9 @@ video is claimed here.
   docs-table `ETHRegistry` generation. Factory address + generation that
   owns this deployment are still unverified; record them so judges can
   reproduce it.
-- ENS records align on-chain with the self-custody wallets, and
-  `POST /api/agents/fund` signs with those keys (§3, §7b); a key that does not
-  derive its subname's wallet fails closed. The four wallets must be funded
-  (Arc testnet USDC) before a round. Per-subname resolvers are not used.
+- ENS records align with the Circle funder wallets, and `POST /api/agents/fund`
+  signs with those Circle wallets (§3, §7b); a funder the name does not resolve
+  to fails closed. Per-subname resolvers are not used.
 
 ## 10. TODO fill-in list (owner + command)
 
@@ -295,12 +291,11 @@ video is claimed here.
 - TODO-3 (owner: Day-8 operator): parent registration DONE live (parent
   resolves; owner/token state in §2-§3 verified 2026-09-11); still open:
   record generation/factory that owns registry `0x365d…e1dc34`.
-- TODO-4 (owner: Day-8 operator): resolution DONE live (4/4 MATCH §3); Arc
-  records re-pointed to the self-custody wallets on 2026-09-11 (4 `setAddr`
-  txs in §3). Still open: `cast receipt` re-check of the older `DEBUG-1.md`
-  hashes, live EAC grant-state read (grant has not been exercised), runtime
-  `agentId` registration + `resolveEnsToAgents` cross-check, per-subname vs
-  shared resolver decision, and switching the fund signer to the local keys.
+- TODO-4 (owner: Day-8 operator): resolution DONE live (4/4 MATCH §3). Still
+  open: `cast receipt` re-check of the older `DEBUG-1.md` hashes, live EAC
+  grant-state read (grant has not been exercised), runtime `agentId`
+  registration + `resolveEnsToAgents` cross-check, per-subname vs shared
+  resolver decision, and re-pointing the records to the Circle funders (§7b).
 - TODO-5 (owner: Day-10 editor): record video, fill §8 timestamps + video URL.
   No video exists yet.
 - TODO-6 (owner: Day-10 deployer): deploy demo app, fill live demo URL in §8.
