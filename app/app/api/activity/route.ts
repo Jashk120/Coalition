@@ -46,7 +46,7 @@ export async function GET(): Promise<NextResponse<ActivityResponse>> {
         ok: true,
         pool: POOL_ADDRESS,
         events: cache.events,
-        note: `stale: ${message.split("\n")[0]}`,
+        note: "stale: activity unavailable",
       });
     }
     log("warn", "activity.unavailable", {
@@ -54,7 +54,7 @@ export async function GET(): Promise<NextResponse<ActivityResponse>> {
       error: message,
     });
     return NextResponse.json(
-      { ok: false, error: `activity unavailable: ${message}` },
+      { ok: false, error: "activity unavailable" },
       { status: 502 },
     );
   }

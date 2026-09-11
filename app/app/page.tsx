@@ -5,8 +5,6 @@ import type { ReactNode } from "react";
 import { DEFAULT_IDENTITY_REGISTRY } from "@jx-nexus/coalition";
 import { EXPLORER_URL, OUTSIDE_BUYER, SEED_META } from "@/lib/constants";
 import type {
-  ActivityEvent,
-  ActivityResponse,
   AgentsResponse,
   AgentUsageView,
   FreePoolResponse,
@@ -36,11 +34,6 @@ type AgentQuoteState = {
   readonly ensName: string;
   readonly quote: QuoteState;
 };
-
-type ActivityState =
-  | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly events: readonly ActivityEvent[] }
-  | { readonly status: "error"; readonly message: string };
 
 type MarketEntry = {
   readonly wallet: string;
@@ -243,7 +236,6 @@ export default function DashboardPage() {
   const [freeError, setFreeError] = useState<string | null>(null);
   const [freeResult, setFreeResult] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<readonly AgentQuoteState[]>([]);
-  const [activity, setActivity] = useState<ActivityState>({ status: "loading" });
   const [usage, setUsage] = useState<UsageState>({ status: "loading" });
   const [terms, setTerms] = useState<TermsState>({ status: "loading" });
   const [namespaces, setNamespaces] = useState<readonly NamespaceView[] | null>(
@@ -279,23 +271,6 @@ export default function DashboardPage() {
       setAgentsError(
         error instanceof Error ? error.message : String(error),
       );
-    }
-  }, []);
-
-  const loadActivity = useCallback(async () => {
-    try {
-      const activityRes = await fetch("/api/activity", { cache: "no-store" });
-      const activityBody = (await parseJson(activityRes)) as ActivityResponse;
-      if (activityBody.ok) {
-        setActivity({ status: "ready", events: activityBody.events });
-      } else {
-        setActivity({ status: "error", message: activityBody.error });
-      }
-    } catch (error) {
-      setActivity({
-        status: "error",
-        message: error instanceof Error ? error.message : String(error),
-      });
     }
   }, []);
 
@@ -513,7 +488,6 @@ export default function DashboardPage() {
       if (body.ok) {
         setFundSteps(body.steps);
         await loadAgents();
-        await loadActivity();
         await loadUsage();
         await loadMarket();
         await loadQuotes();
@@ -525,7 +499,7 @@ export default function DashboardPage() {
     } finally {
       setFunding(false);
     }
-  }, [loadAgents, loadActivity, loadUsage, loadMarket, loadQuotes]);
+  }, [loadAgents, loadUsage, loadMarket, loadQuotes]);
 
   useEffect(() => {
     void loadAgents();
@@ -550,8 +524,8 @@ export default function DashboardPage() {
   }, []);
 
   // Polling keeps the dashboard live without manual reloads: pool/round
-  // state plus resale market every 10s, on-chain activity plus resale
-  // quotes every 15s, wallet names every 30s, ENS namespaces and terms
+  // state plus resale market every 10s, resale quotes every 15s, wallet
+  // names every 30s, ENS namespaces and terms
   // every 60s (identity changes rarely; cached server-side too).
   // Orchestrator usage polls every 1s: it is a cheap in-memory read (no
   // RPC), and the per-second tick is what makes live in-flight bars visibly
@@ -563,9 +537,6 @@ export default function DashboardPage() {
     const usageTimer = setInterval(() => {
       void loadUsage();
     }, 1_000);
-    const activityTimer = setInterval(() => {
-      void loadActivity();
-    }, 15_000);
     const marketTimer = setInterval(() => {
       void loadMarket();
     }, 10_000);
@@ -584,7 +555,6 @@ export default function DashboardPage() {
     return () => {
       clearInterval(agentsTimer);
       clearInterval(usageTimer);
-      clearInterval(activityTimer);
       clearInterval(marketTimer);
       clearInterval(quotesTimer);
       clearInterval(walletsTimer);
@@ -594,7 +564,6 @@ export default function DashboardPage() {
   }, [
     loadAgents,
     loadUsage,
-    loadActivity,
     loadMarket,
     loadQuotes,
     loadWallets,
@@ -608,11 +577,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     void loadQuotes();
-    void loadActivity();
     void loadTerms();
     void loadMarket();
     void loadWallets();
-  }, [loadActivity, loadMarket, loadQuotes, loadTerms, loadWallets]);
+  }, [loadMarket, loadQuotes, loadTerms, loadWallets]);
 
   const freePool = useCallback(async () => {
     if (
@@ -648,7 +616,6 @@ export default function DashboardPage() {
         setRotateError(rotateBody.error);
       }
       await loadAgents();
-      await loadActivity();
       await loadUsage();
       await loadMarket();
       await loadQuotes();
@@ -657,7 +624,7 @@ export default function DashboardPage() {
     } finally {
       setFreeing(false);
     }
-  }, [loadAgents, loadActivity, loadUsage, loadMarket, loadQuotes]);
+  }, [loadAgents, loadUsage, loadMarket, loadQuotes]);
 
   // Resale shows whenever someone actually holds spare: an empty market
   // (no allocations, or fully-used slices) has nothing to sell, so the
@@ -684,7 +651,7 @@ export default function DashboardPage() {
           4-agent funding demo on Arc 5042002. Fund on-chain writes real
           approve+commit transactions via Circle wallets. Live — compute
           usage streams every second, pool + resale market every 10s,
-          on-chain activity + resale quotes every 15s.
+          resale quotes every 15s.
         </p>
       </header>
 
@@ -1411,69 +1378,6 @@ export default function DashboardPage() {
         )}
       </section>
 
-
-      <section className="card" aria-label="On-chain activity">
-        <h2>On-chain activity</h2>
-        {activity.status === "loading" ? (
-          <div className="state">Loading pool events…</div>
-        ) : activity.status === "error" ? (
-          <div className="state state-error" role="alert">
-            Activity unavailable: {activity.message}
-          </div>
-        ) : activity.events.length === 0 ? (
-          <div className="state">
-            No commitments yet — pool awaiting first commit.
-          </div>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Event</th>
-                  <th>Agent</th>
-                  <th>Amount</th>
-                  <th>Block</th>
-                  <th>Tx</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activity.events.map((event) => (
-                  <tr key={`${event.blockNumber}-${event.txHash}-${event.kind}`}>
-                    <td>
-                      {event.kind}
-                      {event.roundId !== undefined
-                        ? ` · round ${event.roundId}`
-                        : null}
-                    </td>
-                    <td className="mono">
-                      {event.kind === "committed"
-                        ? displayAgent(event.agent)
-                        : "—"}
-                    </td>
-                    <td>
-                      {event.kind === "committed"
-                        ? `${formatUsdc(event.amountAtomic)} USDC`
-                        : event.kind === "settled"
-                          ? `${formatUsdc(event.totalAtomic)} USDC`
-                          : `${formatUsdc(event.targetAtomic)} USDC target`}
-                    </td>
-                    <td className="mono">{event.blockNumber}</td>
-                    <td className="mono">
-                      <a
-                        href={`${EXPLORER_URL}/tx/${event.txHash}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {shortAddress(event.txHash)}
-                      </a>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
 
       <section className="card" aria-label="Pool terms">
         <h2>Pool terms</h2>
