@@ -11,10 +11,8 @@ import type { TreasurySendStep } from "./types";
 const ARC_CHAIN = "Arc_Testnet" as const;
 
 export const TREASURY_SETUP_HINT =
-  "Set CIRCLE_TREASURY_WALLET_ID to a dedicated operator wallet on Arc " +
-  "Testnet, funded with USDC at https://faucet.circle.com. Do not use the pool " +
-  "provider: the provider is the settle payee and must not fund the agents " +
-  "that pay into the pool.";
+  "Set CIRCLE_TREASURY_WALLET_ID to a Circle wallet on Arc Testnet funded " +
+  "with USDC at https://faucet.circle.com (the pool provider is allowed).";
 
 export type TreasuryEnv =
   | {
