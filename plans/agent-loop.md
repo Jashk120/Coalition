@@ -34,8 +34,8 @@ and never commits.
 | agent-3 | `agent3.agentpool.eth` | `0x072825b4ba2c8019ccceba10e59b29a40980be94` | 0.1 | 400 MB | $2.50 = `2500000` atomic |
 | agent-4 | `agent4.agentpool.eth` | `0x67bc424b83be66f7f5c4fc2324d4154744f1b310` | 0.25 | 1000 MB | $2.50 = `2500000` atomic |
 
-Held out: `0x71846352cc198d7f3bfeb677f8631eb84d311329` (resale buyer,
-optional `buyer.agentpool.eth` — never commits, stays outside the loop).
+Held out: `0x2e07588b8180c8235c2a1be7ffa2639545630dd1` (resale buyer,
+optional `agent5.agentpool.eth` — never commits, stays outside the loop).
 
 Parent `agentpool.eth`, Arc coin type `2152525650` (`ARC_COIN_TYPE`,
 `0x80000000 | 5042002`) — see the `ens` block in `demo/agents.seeds.json`
@@ -312,13 +312,13 @@ command, so the LLM can never overfill the pool.
 
 ## 5. Resale coda (outside buyer, no commit)
 
-After the 4-agent loop, the held-out buyer `0x7184…` prices spare capacity
+After the 4-agent loop, the held-out buyer `0x2e07…` prices spare capacity
 without joining — the §6 Nanopayments beat:
 
 ```sh
 curl -s 'http://localhost:8080/quote?seller=0x0427194a9c99599a8bbbcc292b1523be91e4101d'
 circle services search "compute"   # discover-services skill
-circle services pay https://seller.example/compute --address 0x71846352cc198d7f3bfeb677f8631eb84d311329 --chain ARC-TESTNET --max-amount 0.01
+circle services pay https://seller.example/compute --address 0x2e07588b8180c8235c2a1be7ffa2639545630dd1 --chain ARC-TESTNET --max-amount 0.01
 ```
 
 SDK form: `fetchQuote({ baseUrl, seller })` then `quoteCost(quote, { mb, cu })`

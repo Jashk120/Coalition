@@ -31,6 +31,14 @@ at `POLL_INTERVAL` 5s). Funding needs `CIRCLE_API_KEY`,
 then fund each wallet with per-wallet USDC via faucet.circle.com; the
 approve passes empty but the commit needs balance).
 
+The resale buy flow is server-only as well: `ORCHESTRATOR_APP_KEY` (or
+`APP_KEY`) authorizes the orchestrator `/commit-mint` call, and
+`CIRCLE_BUYER_WALLET_ID` is the held-out agent-5 buyer Circle wallet — its
+address is `OUTSIDE_BUYER` in `lib/constants.ts` (`0x2e07…dd1`). Keep that
+wallet out of `CIRCLE_WALLET_IDS` and fund it per-wallet at
+faucet.circle.com: the buy settles as one atomic Multicall3 aggregate, so no
+Gateway deposit is needed.
+
 ## Routes
 
 - `/` — agents table, pool-fill progress, trigger button, decision log,
@@ -49,6 +57,18 @@ approve passes empty but the commit needs balance).
   the first commit. Served from a 60s server cache that goes stale instead
   of 502ing while throttled (502 only on a cold cache).
 - `GET /api/quote?seller=0x…` — resale quote via SDK `fetchQuote`.
+- `POST /api/resale/plan` — relay to the orchestrator's free `POST /fill-plan`;
+  validates the atomic-settlement
+  `{outputs,totalAtomic,nonce,roundId,headroomMB,headroomCUMicro}` shape and
+  echoes the requested `{mem,cu}` back as `want`.
+- `POST /api/resale/buy` — agent-5 buyer: USDC `approve` to Multicall3, one
+  atomic `aggregate` of `transferFrom` payouts, then orchestrator
+  `/commit-mint` against that tx; returns the buyer slice and `toToken`.
+- `GET /api/resale/market` — per-allocation spare readout from orchestrator
+  `GET /usage`, each priced via SDK `fetchQuote`.
+- `POST /api/resale/quota` — x402-Gateway-paid purchase: settles through the
+  Circle Gateway middleware, then relays the settlement id to the
+  orchestrator `/transfer-quota`.
 - `GET /api/terms` — orchestrator `/terms.json` relay.
 
 ## Fund flow (`app/api/agents/fund/route.ts`, `lib/circle-fund.ts`)

@@ -69,14 +69,17 @@ capped at target".
 Three tiers, enforced in the router (not per-handler), independent — never
 stacked:
 
-- **Public, no auth** — `GET /healthz`, `GET /terms.json`, `GET /quote`.
-  `terms.json` stays world-readable by design: it is the on-chain
-  `resourceURI` pointer target, so anyone verifying the pool must be able to
-  fetch it. `/quote` stays open because buyers are external agents without
-  tokens — price discovery must work before anyone holds credentials.
-- **Operator, app key** — `POST /allocate` requires `X-App-Key: <key>`.
-  Allocate mints quota plus agent tokens, i.e. it is a privilege grant, so
-  only the operator app may call it; agents must not self-provision. Missing
+- **Public, no auth** — `GET /healthz`, `GET /terms.json`, `GET /quote`,
+  `POST /fill-plan`. `terms.json` stays world-readable by design: it is the
+  on-chain `resourceURI` pointer target, so anyone verifying the pool must be
+  able to fetch it. `/quote` and `/fill-plan` stay open because buyers are
+  external agents without tokens — price discovery must work before anyone
+  holds credentials.
+- **Operator, app key** — `POST /allocate` and `POST /commit-mint` require
+  `X-App-Key: <key>`. Both mint quota (allocate: the wallet's own slice plus an
+  agent token; commit-mint: the buyer's slice against an on-chain aggregate
+  settlement), so both are privilege grants and only the operator app may call
+  them — agents must not self-provision. Missing
   key → `401 {"code":"unauthorized"}`; wrong key → `403 {"code":"forbidden"}`.
   Comparison is `crypto/subtle` constant-time against the stored sha256, the
   same style as agent-token comparison. The response shape is unchanged —
@@ -134,7 +137,8 @@ the on-chain pool expires unfilled (`/run` keeps serving — see pool awareness)
 `409 {"code":"pool_exhausted"}` when a slice would oversubscribe the pool or
 breach `MAX_AGENTS` (allocate and transfer-recipient paths alike),
 `409 {"code":"duplicate_payment"}` when a transfer reuses a spent `txHash`,
-`402 {"code":"payment_required"}` when a transfer's payment proof fails,
+`402 {"code":"payment_required"}` when a transfer's or commit-mint's
+settlement proof fails,
 `429 {"code":"quota_exceeded"}` for over-budget exec,
 `429 {"code":"rate_limited"}` for per-IP rate limiting.
 
@@ -305,6 +309,53 @@ settlement proofs, replay protection, settle-on-delivery that also closes the
 racer hole above) is out of Go stdlib scope and not implemented —
 direct-transfer receipts are the supported rail; treat x402 as a future
 pricing-rail addition, not a drop-in.
+
+### POST /fill-plan — free preview of an aggregate resale buy
+
+```sh
+curl -s -X POST localhost:8080/fill-plan \
+  -H 'Content-Type: application/json' \
+  -d '{"wallet":"0x2e07588b8180c8235c2a1be7ffa2639545630dd1","cu":0.5,"mem":500}'
+# {"outputs":[{"account":"0x0427...","amountAtomic":"93000"},...],
+#  "totalAtomic":"...","nonce":"<32-byte hex>","roundId":"7",
+#  "headroomMB":...,"headroomCUMicro":...}
+```
+
+Public (no auth). Ranks the wallets whose funded cost-to-compute ratio is
+most skewed and splits the requested `{mem, cu}` across them, quoting each
+payout at cost basis with the division dust swept onto the paid legs so the
+per-wallet amounts sum to `totalAtomic` exactly. `outputs` are wallet-asc
+unique; the response also carries a single-use `nonce` and the current
+`roundId`. Requests past the pool's total spare return 409
+`insufficient_spare`; an expired-unfilled round returns 409 `pool_closed`; an
+unreadable chain or untracked round returns 502 `chain_unreadable`. Headroom
+and the tracked round are recomputed every call, so an old plan can fail
+commit-mint — always commit the latest preview.
+
+### POST /commit-mint — settle an aggregate resale buy
+
+```sh
+curl -s -X POST localhost:8080/commit-mint \
+  -H 'Content-Type: application/json' -H "X-App-Key: $APP_KEY" \
+  -d '{"to":"0x2e07588b8180c8235c2a1be7ffa2639545630dd1","mb":500,"cuMicro":500000,
+       "settlementTxHash":"0x...","nonce":"<32-byte hex>","roundId":"7",
+       "outputs":[{"account":"0x0427...","amountAtomic":"93000"}]}'
+# {"to":{"wallet":"0x2e07...","cpu":0.05,"memMB":500,...},"toToken":"..."}
+```
+
+Operator-tier (`X-App-Key`), the settlement half of the resale rail: after
+previewing via `/fill-plan` the buyer app sends one on-chain Multicall3
+`aggregate` of USDC `transferFrom` legs and passes that single tx hash here.
+Validation is all-or-nothing: `outputs` must be non-empty within
+`MAX_AGENTS`, wallet-asc unique, positive, exclude the buyer, and sum exactly
+to the quoted cost (`mb × ratePerMB + floor(cuMicro/1e6 × ratePerCU)`);
+`roundId` must equal the tracked current round; and the tx must be a success
+receipt from `to` to Multicall3, at least `CONFIRMATIONS` deep, carrying one
+USDC `Transfer` log from the buyer per output in wallet-asc order with
+matching amounts. Any mismatch (receipt status/sender/recipient, Transfer
+count or amount, stale round, cost drift) returns 402 `payment_required`;
+replaying an already-settled tx returns 409 `duplicate_payment`. On success
+the buyer's slice is minted and its agent token returned as `toToken`.
 
 ### GET /healthz
 

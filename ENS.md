@@ -65,7 +65,7 @@ filled at runtime via `registerAgent` — cross-check live at TODO-4.
 | `agent4.agentpool.eth` | `0x67bc424b83be66f7f5c4fc2324d4154744f1b310` | TODO-4 (runtime) |
 
 Held out (never a subname, never commits): resale buyer
-`0x71846352cc198d7f3bfeb677f8631eb84d311329`.
+`0x2e07588b8180c8235c2a1be7ffa2639545630dd1`.
 
 ### Live verification (2026-09-10, Sepolia `https://ethereum-sepolia-rpc.publicnode.com`)
 

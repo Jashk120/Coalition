@@ -46,6 +46,6 @@ export const DEMO_SEED_BUYER: {
   readonly wallet: Address;
   readonly ensName: string;
 } = {
-  wallet: "0x71846352cc198d7f3bfeb677f8631eb84d311329",
-  ensName: "buyer.agentpool.eth",
+  wallet: "0x2e07588b8180c8235c2a1be7ffa2639545630dd1",
+  ensName: "agent5.agentpool.eth",
 };
