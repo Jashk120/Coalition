@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/Jashk120/Coalition/orchestrator/internal/domain"
 )
 
 type fillPlanOut struct {
@@ -210,6 +212,26 @@ func Test_X402_fill_plan_nonce_unique(t *testing.T) {
 	}
 	if first.Nonce == second.Nonce {
 		t.Fatalf("nonces must differ, got %q twice", first.Nonce)
+	}
+}
+
+func Test_X402_imputed_cost_time_spread(t *testing.T) {
+	rateCU := big.NewInt(5_000_000)
+	rateMB := big.NewInt(1220)
+	fullBurn := domain.Usage{CUSeconds: 900, MBHours: 1000}
+	got, err := imputedCost(fullBurn, rateMB, rateCU, 1)
+	if err != nil {
+		t.Fatalf("imputedCost: %v", err)
+	}
+	if want := big.NewInt(2_470_000); got.Cmp(want) != 0 {
+		t.Fatalf("full-window burn imputed %s, want %s", got, want)
+	}
+	zero, err := imputedCost(domain.Usage{}, rateMB, rateCU, 1)
+	if err != nil {
+		t.Fatalf("imputedCost zero: %v", err)
+	}
+	if zero.Sign() != 0 {
+		t.Fatalf("zero burn must impute zero, got %s", zero)
 	}
 }
 

@@ -165,7 +165,7 @@ func (s *Server) handleFillPlan(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, s.logger, fmt.Errorf("ledger usage %q: %w", wstr, err))
 			return
 		}
-		cost, err := imputedCost(usage, rateMB, rateCU)
+		cost, err := imputedCost(usage, rateMB, rateCU, s.cfg.WindowHours)
 		if err != nil {
 			writeJSONError(w, s.logger, badRequest(err.Error()))
 			return
@@ -225,9 +225,13 @@ func (s *Server) handleFillPlan(w http.ResponseWriter, r *http.Request) {
 }
 
 // imputedCost prices burned usage at cost basis with bigint math only:
-// floor(usedCUSeconds*rateCU + usedMBHours*rateMB). Both usage dimensions
-// are floats, so each rides big.Rat exactly like the transferCost cu leg.
-func imputedCost(usage domain.Usage, rateMB, rateCU *big.Int) (*big.Int, error) {
+// floor(usedCUSeconds*rateCU/(windowHrs*3600) + usedMBHours*rateMB/windowHrs).
+// Usage counters are cumulative over the window while the rates price one
+// window of the slice, so each leg is time-spread exactly like
+// remainingLocked — without the spread a single hour of burn would impute
+// ~3600x its value and zero every payout skew. Both usage dimensions are
+// floats, so each rides big.Rat exactly like the transferCost cu leg.
+func imputedCost(usage domain.Usage, rateMB, rateCU *big.Int, windowHrs int64) (*big.Int, error) {
 	cuRat, ok := new(big.Rat).SetString(strconv.FormatFloat(usage.CUSeconds, 'g', -1, 64))
 	if !ok {
 		return nil, fmt.Errorf("cuSeconds=%v: %w", usage.CUSeconds, domain.ErrInvalidQuota)
@@ -236,9 +240,10 @@ func imputedCost(usage domain.Usage, rateMB, rateCU *big.Int) (*big.Int, error) 
 	if !ok {
 		return nil, fmt.Errorf("mbHours=%v: %w", usage.MBHours, domain.ErrInvalidQuota)
 	}
+	spread := new(big.Rat).SetInt64(windowHrs)
 	legs := new(big.Rat).Add(
-		new(big.Rat).Mul(new(big.Rat).SetInt(rateCU), cuRat),
-		new(big.Rat).Mul(new(big.Rat).SetInt(rateMB), mbRat),
+		new(big.Rat).Quo(new(big.Rat).Mul(new(big.Rat).SetInt(rateCU), cuRat), new(big.Rat).Mul(spread, big.NewRat(3600, 1))),
+		new(big.Rat).Quo(new(big.Rat).Mul(new(big.Rat).SetInt(rateMB), mbRat), spread),
 	)
 	return new(big.Int).Quo(legs.Num(), legs.Denom()), nil
 }
