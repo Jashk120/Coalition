@@ -225,32 +225,20 @@ Funding requires ENS attestation: `POST /api/agents/fund` resolves each
 or allocate happens for it. `POST /api/agents/run` resolves every seed
 live first under the same rule.
 
-Circle wallet skill preconditions (per `plans/circle-agent-kit.md` §§3–4):
-agent follows the `wallet-pay` skill triage before paying (Arc = vanilla path,
-not Gateway), wallet already exists (`wallet-login`) and is funded
-(`wallet-fund`), USDC `0x3600000000000000000000000000000000000000` (6-dec view).
+Agents sign with their own self-custody keys (`~/.coalition/seed-keys.json`,
+server-only; override with `SEED_KEYS_FILE`). `POST /api/agents/fund` reads
+those keys, signs `approve` then `commit` with viem, and keeps the ENS
+attestation above — the signer address MUST equal the wallet its subname
+resolves to. USDC `0x3600000000000000000000000000000000000000` (6-dec view);
+`approve(address,uint256)` is sent before every `commit`.
 
-Exact CLI syntax — `--address` is the agent's own seed wallet,
-`--chain ARC-TESTNET` on every call:
+CLI equivalent (same order, same cap rule — order is agent-1..4):
 
 ```sh
-# 1. approve the pool to pull $2.50 (2500000 atomic, 6-dec view)
-circle wallet execute "approve(address,uint256)" \
-  0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd 2500000 \
-  --contract 0x3600000000000000000000000000000000000000 \
-  --address 0x0e14d61f2bf9e1a494677257b8855e7ed091d983 \
-  --chain ARC-TESTNET
-
-# 2. commit $2.50 — reverts OverTarget past 10.00 / TooManyParticipants past cap
-circle wallet execute "commit(uint256)" \
-  2500000 \
-  --contract 0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd \
-  --address 0x0e14d61f2bf9e1a494677257b8855e7ed091d983 \
-  --chain ARC-TESTNET
+SEED_PRIVATE_KEYS="$K1,$K2,$K3,$K4" node sdk/scripts/fund-pool.mjs
 ```
 
-Substitute `--address` per seed for agent-2/3/4. SDK equivalent (same
-`approve`-then-`commit` order, same cap rule):
+SDK equivalent:
 
 ```ts
 import { commitToPool, wouldExceedTarget } from "@jx-nexus/coalition";

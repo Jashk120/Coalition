@@ -235,10 +235,10 @@ node scripts/repoint-ens.mjs --map agent1=0x0e14d61f2bf9e1a494677257b8855e7ed091
 ```
 
 The SDK/app seed `wallet` constants expect these addresses, and the on-chain
-records now match. Remaining: fund the four wallets with Arc testnet USDC and
-switch `POST /api/agents/fund` to sign with the local keys (self-custody)
-instead of Circle. Until that signer switch lands, funding correctly fails
-closed because the Circle funder addresses are no longer the ENS wallets.
+records now match. `POST /api/agents/fund` signs with these keys (viem
+`approve` + `commit`, keys read from `~/.coalition/seed-keys.json`) and keeps
+the ENS attestation, so a key whose address the name does not resolve to fails
+closed. Remaining operational step: fund the four wallets with Arc testnet USDC.
 
 ## 8. Video timestamps + live demo URL
 
@@ -279,10 +279,10 @@ video is claimed here.
   docs-table `ETHRegistry` generation. Factory address + generation that
   owns this deployment are still unverified; record them so judges can
   reproduce it.
-- ENS records now align on-chain with the self-custody wallets (§3, §7b).
-  Funding still fails closed until `POST /api/agents/fund` signs with those
-  local keys (the Circle signer no longer matches the ENS wallets). Per-subname
-  resolvers are not used.
+- ENS records align on-chain with the self-custody wallets, and
+  `POST /api/agents/fund` signs with those keys (§3, §7b); a key that does not
+  derive its subname's wallet fails closed. The four wallets must be funded
+  (Arc testnet USDC) before a round. Per-subname resolvers are not used.
 
 ## 10. TODO fill-in list (owner + command)
 
