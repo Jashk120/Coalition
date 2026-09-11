@@ -1,28 +1,19 @@
 import { NextResponse } from "next/server";
-import { erc20Abi } from "viem";
-import type { Address, Hash } from "viem";
+import { fromAtomicUsdc, resolveArcWallet } from "@jx-nexus/coalition";
+import { POOL_ADDRESS, SEED_META, SHARE_ATOMIC } from "@/lib/constants";
 import {
-  ARC_TESTNET,
-  commitToPool,
-  fromAtomicUsdc,
-  resolveArcWallet,
-} from "@jx-nexus/coalition";
-import {
-  POOL_ADDRESS,
-  SEED_META,
-  SHARE_ATOMIC,
   USDC_ADDRESS,
-} from "@/lib/constants";
-import { arcPublicClient, sepoliaPublicClient } from "@/lib/chain";
+  createCircleClient,
+  executeContractAndWait,
+  getWalletAddress,
+  readCircleEnv,
+} from "@/lib/circle-fund";
+import { sepoliaPublicClient } from "@/lib/chain";
 import { log } from "@/lib/logger";
 import { orchestratorBaseUrl, readCurrentRound } from "@/lib/pool-state";
-import { readSeedSigners } from "@/lib/seed-keys";
-import type { SeedSigner } from "@/lib/seed-keys";
 import type { FundResponse, FundStep } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-type ArcPublicClient = ReturnType<typeof arcPublicClient>;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -84,26 +75,29 @@ function isTerminalSettleDenial(error: string | undefined): boolean {
 
 type FunderAttestation = {
   readonly index: number;
-  readonly wallet: Address;
+  readonly walletId: string;
+  /** Funder's on-chain address, or "" when the Circle lookup failed. */
+  readonly wallet: string;
   readonly ensName: string | null;
-  readonly ensWallet: Address | null;
+  readonly ensWallet: string | null;
   readonly ok: boolean;
   readonly note?: string;
 };
 
 /**
- * Attest one self-custody signer against its ENS subname: the signer address
- * MUST equal the live `agentN.agentpool.eth` Arc record. This is the
- * load-bearing ENS check — a key whose address the name does not resolve to
- * can never approve or commit.
+ * Attest one Circle funder against its ENS subname: the funder address MUST
+ * equal the live `agentN.agentpool.eth` Arc record. This is the load-bearing
+ * ENS check — a funder the name does not resolve to can never approve/commit.
  */
 async function attestFunder(params: {
-  readonly signer: SeedSigner;
+  readonly client: Parameters<typeof getWalletAddress>[0];
+  readonly walletId: string;
   readonly index: number;
 }): Promise<FunderAttestation> {
   const ensName = SEED_META[params.index]?.ensName ?? null;
-  const wallet = params.signer.address;
-  let ensWallet: Address | null = null;
+  const address = await getWalletAddress(params.client, params.walletId);
+  const wallet = address ?? "";
+  let ensWallet: string | null = null;
   let note: string | undefined;
   if (ensName === null) {
     note = `no ENS subname configured for funder index ${params.index}`;
@@ -120,16 +114,20 @@ async function attestFunder(params: {
   }
   const ok =
     ensName !== null &&
+    address !== null &&
     ensWallet !== null &&
-    ensWallet.toLowerCase() === wallet.toLowerCase();
+    ensWallet.toLowerCase() === address.toLowerCase();
   if (!ok && note === undefined) {
     note =
-      ensWallet === null
-        ? `no Arc record for "${ensName ?? `index ${params.index}`}"`
-        : `signer ${wallet} != ENS wallet ${ensWallet} for "${ensName}"`;
+      address === null
+        ? "Circle funder address unavailable"
+        : ensWallet === null
+          ? `no Arc record for "${ensName ?? `index ${params.index}`}"`
+          : `funder ${address} != ENS wallet ${ensWallet} for "${ensName}"`;
   }
   return {
     index: params.index,
+    walletId: params.walletId,
     wallet,
     ensName,
     ensWallet,
@@ -140,9 +138,10 @@ async function attestFunder(params: {
 
 type AttestedFunder = {
   readonly index: number;
-  readonly wallet: Address;
+  readonly walletId: string;
+  readonly wallet: string;
   readonly ensName: string | null;
-  readonly ensWallet: Address;
+  readonly ensWallet: string;
   readonly ok: true;
 };
 
@@ -153,57 +152,9 @@ function attestationFields(att: FunderAttestation): Pick<
   return {
     ...(att.ensName === null ? {} : { ensName: att.ensName }),
     ensWallet: att.ensWallet,
-    funderWallet: att.wallet,
+    funderWallet: att.wallet === "" ? null : att.wallet,
     ensAttested: att.ok,
   };
-}
-
-type TxResult =
-  | { readonly ok: true; readonly hash: Hash }
-  | { readonly ok: false; readonly error: string };
-
-/** Approve the pool to pull `amount`, signed by the agent's own key. */
-async function approveUsdc(
-  publicClient: ArcPublicClient,
-  signer: SeedSigner,
-  amount: bigint,
-): Promise<TxResult> {
-  try {
-    const hash = await signer.walletClient.writeContract({
-      address: USDC_ADDRESS as Address,
-      abi: erc20Abi,
-      functionName: "approve",
-      args: [POOL_ADDRESS, amount],
-      account: signer.account,
-      chain: ARC_TESTNET,
-    });
-    await publicClient.waitForTransactionReceipt({ hash });
-    return { ok: true, hash };
-  } catch (error) {
-    return { ok: false, error: errorMessage(error) };
-  }
-}
-
-/** Commit to `roundId` (omit on the v1 shim), signed by the agent's own key. */
-async function commitToRound(
-  publicClient: ArcPublicClient,
-  signer: SeedSigner,
-  roundId: string,
-  amount: bigint,
-): Promise<TxResult> {
-  try {
-    const { hash } = await commitToPool({
-      walletClient: signer.walletClient,
-      account: signer.account,
-      pool: POOL_ADDRESS,
-      amount,
-      ...(roundId === "0" ? {} : { roundId: BigInt(roundId) }),
-    });
-    await publicClient.waitForTransactionReceipt({ hash });
-    return { ok: true, hash };
-  } catch (error) {
-    return { ok: false, error: errorMessage(error) };
-  }
 }
 
 async function allocateWithRetry(
@@ -277,38 +228,34 @@ async function allocateSlice(
 }
 
 /**
- * POST /api/agents/fund — headless on-chain funding from the agents' own
- * self-custody keys (`~/.coalition/seed-keys.json`). Live gating (settled /
- * expired / full) then a USDC approve + pool commit per agent, recording the
- * tx hashes. Funding is gated on ENS: each key must derive the wallet its
- * `agentN.agentpool.eth` record resolves to, so a misaligned key fails closed.
- * A missing keys file yields 503 with a setup hint.
+ * POST /api/agents/fund — headless on-chain funding via Circle
+ * Developer-Controlled Wallets. Each configured wallet runs SEQUENTIALLY:
+ * live round gating (settled/expired/full skips) followed by a USDC approve +
+ * pool commit through Circle, recording on-chain tx hashes. ENS is mandatory:
+ * each funder must equal the wallet its `agentN.agentpool.eth` record resolves
+ * to, so a misaligned funder fails closed. Missing CIRCLE_* env yields 503.
  */
 export async function POST(): Promise<NextResponse<FundResponse>> {
-  const seedKeys = readSeedSigners();
-  if (!seedKeys.ok) {
-    log("error", "agents.fund.missing_keys", {
+  const env = readCircleEnv();
+  if (!env.ok) {
+    log("error", "agents.fund.missing_env", {
       route: "POST /api/agents/fund",
-      error: seedKeys.error,
+      error: env.error,
     });
-    return NextResponse.json({ ok: false, error: seedKeys.error }, { status: 503 });
+    return NextResponse.json({ ok: false, error: env.error }, { status: 503 });
   }
-  const signers = seedKeys.signers;
 
   const started = Date.now();
-  const publicClient = arcPublicClient();
+  const client = createCircleClient(env.apiKey, env.entitySecret);
 
   try {
     const slots: { readonly index: number; readonly step: FundStep }[] = [];
     let fundedRoundId: string | undefined;
-    // ENS attestation pre-pass: the signer for each agent must be the wallet
-    // its subname resolves to. Unattested signers never reach approve/commit.
+    // ENS attestation pre-pass: every funder must be the wallet its subname
+    // resolves to. Unattested funders never reach approve/commit.
     const attestations = new Map<number, FunderAttestation>();
-    for (const signer of signers) {
-      attestations.set(
-        signer.index,
-        await attestFunder({ signer, index: signer.index }),
-      );
+    for (const [index, walletId] of env.walletIds.entries()) {
+      attestations.set(index, await attestFunder({ client, walletId, index }));
     }
     const attestedLeftFrom = (index: number): number =>
       [...attestations.values()].filter((att) => att.ok && att.index >= index)
@@ -324,17 +271,19 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
     // nothing else commits mid-run, and it can never overshoot the target.
     // No chain writes here.
     type FundJob = {
-      readonly signer: SeedSigner;
+      readonly walletId: string;
+      readonly wallet: string;
       readonly index: number;
       readonly roundId: string;
       readonly amount: bigint;
+      readonly shareAmount: string;
       readonly att: AttestedFunder;
     };
     const jobs: FundJob[] = [];
     const opening = await readCurrentRound().catch((): null => null);
     log("info", "agents.fund.start", {
       route: "POST /api/agents/fund",
-      wallets: signers.length,
+      wallets: env.walletIds.length,
       pool: POOL_ADDRESS,
       source: opening === null ? "unknown" : opening.source,
       ...(opening?.note === undefined ? {} : { note: opening.note }),
@@ -347,9 +296,9 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
       });
     }
     if (opening === null) {
-      for (const signer of signers) {
-        slots.push({ index: signer.index, step: {
-          wallet: signer.address,
+      for (const [index, walletId] of env.walletIds.entries()) {
+        slots.push({ index, step: {
+          wallet: attestations.get(index)?.wallet ?? walletId,
           decision: "failed",
           reason: "failed: round read unavailable",
           approveTxHash: null,
@@ -364,16 +313,14 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           ? target - BigInt(opening.view.totalCommitted)
           : 0n;
       const closed = opening.view.settled || opening.view.expired;
-      for (const signer of signers) {
-        const index = signer.index;
-        const wallet = signer.address;
+      for (const [index, walletId] of env.walletIds.entries()) {
         const att = attestations.get(index);
-        const attWallet = att?.ensWallet ?? null;
+        const attWallet = att !== undefined && att.ok ? att.wallet : null;
         if (att === undefined || !att.ok || attWallet === null) {
           const step: FundStep = {
-            wallet,
+            wallet: att?.wallet ?? walletId,
             decision: "failed",
-            reason: `ENS attestation failed: ${att?.note ?? "unknown signer"}`,
+            reason: `ENS attestation failed: ${att?.note ?? "unknown funder"}`,
             roundId,
             approveTxHash: null,
             commitTxHash: null,
@@ -381,7 +328,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           };
           slots.push({ index, step });
           log("info", "agents.fund.step", {
-            wallet,
+            wallet: step.wallet,
             decision: step.decision,
             reason: step.reason,
             ensAttested: false,
@@ -394,7 +341,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           // still allocate post-settle, so try before skipping.
           const allocation = await allocateWithRetry(attWallet, index);
           const step: FundStep = {
-            wallet,
+            wallet: attWallet,
             decision: "skipped",
             reason: `skip: round ${roundId} settled/expired`,
             roundId,
@@ -408,7 +355,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           };
           slots.push({ index, step });
           log("info", "agents.fund.step", {
-            wallet,
+            wallet: step.wallet,
             decision: step.decision,
             reason: step.reason,
             allocateOk: allocation.ok,
@@ -421,7 +368,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         // to run, capped at the standard share.
         if (remaining <= 0n) {
           const step: FundStep = {
-            wallet,
+            wallet: attWallet,
             decision: "skipped",
             reason: `skip: round ${roundId} already at ${fromAtomicUsdc(target)} target`,
             roundId,
@@ -431,7 +378,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           };
           slots.push({ index, step });
           log("info", "agents.fund.step", {
-            wallet,
+            wallet: step.wallet,
             decision: step.decision,
             reason: step.reason,
           });
@@ -448,12 +395,15 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         // already sunk into `remaining` via the snapshot above.
         remaining -= amount;
         jobs.push({
-          signer,
+          walletId,
+          wallet: attWallet,
           index,
           roundId,
           amount,
+          shareAmount: amount.toString(),
           att: {
             index: att.index,
+            walletId: att.walletId,
             wallet: attWallet,
             ensName: att.ensName,
             ensWallet: attWallet,
@@ -463,18 +413,23 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
       }
     }
 
-    // Phase 2 — parallel approves. Independent USDC approvals, one per
-    // account with no shared nonce, so Promise.all is safe; it preserves
-    // seed order in the returned array.
+    // Phase 2 — parallel approves. Independent USDC approvals with no
+    // shared state between wallets; Promise.all preserves seed order.
     const approvals = await Promise.all(
-      jobs.map((job) => approveUsdc(publicClient, job.signer, job.amount)),
+      jobs.map(async (job) =>
+        executeContractAndWait(client, {
+          walletId: job.walletId,
+          contractAddress: USDC_ADDRESS,
+          abiFunctionSignature: "approve(address,uint256)",
+          abiParameters: [POOL_ADDRESS, job.shareAmount],
+        }),
+      ),
     );
 
     // Phase 3 — sequential commits in seed order. Commits share the round
     // remainder and the last one auto-settles, so they must not race.
     for (const [jobAt, job] of jobs.entries()) {
-      const { signer, index, roundId, amount, att } = job;
-      const wallet = signer.address;
+      const { walletId, wallet, index, roundId, amount, shareAmount, att } = job;
       const approve = approvals[jobAt];
       if (approve === undefined || !approve.ok) {
         const step: FundStep = {
@@ -495,14 +450,27 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
         continue;
       }
       try {
-        const commit = await commitToRound(publicClient, signer, roundId, amount);
+        const commit =
+          roundId === "0"
+            ? await executeContractAndWait(client, {
+                walletId,
+                contractAddress: POOL_ADDRESS,
+                abiFunctionSignature: "commit(uint256)",
+                abiParameters: [shareAmount],
+              })
+            : await executeContractAndWait(client, {
+                walletId,
+                contractAddress: POOL_ADDRESS,
+                abiFunctionSignature: "commit(uint256,uint256)",
+                abiParameters: [roundId, shareAmount],
+              });
         if (!commit.ok) {
           const step: FundStep = {
             wallet,
             decision: "failed",
             reason: `commit failed: ${commit.error}`,
             roundId,
-            approveTxHash: approve.hash,
+            approveTxHash: approve.txHash,
             commitTxHash: null,
             ...attestationFields(att),
           };
@@ -511,25 +479,25 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             wallet,
             decision: step.decision,
             reason: step.reason,
-            approveTxHash: approve.hash,
+            approveTxHash: approve.txHash,
           });
           continue;
         }
 
         // Provision the VPS slice right after the commit lands: one fund
         // click funds on-chain AND allocates compute. The slice goes to the
-        // ENS-attested agent wallet, so the orchestrator's entitlement is
-        // keyed to the same identity ENS names. Retried: the tracker's round
-        // view can lag the commit by seconds. A failed allocate never flips
-        // funded to failed — the money moved, so it is only recorded on the step.
-        const allocation = await allocateWithRetry(att.ensWallet, index, true);
+        // attested funder address, so the orchestrator's entitlement is keyed
+        // to the same identity ENS names. Retried: the tracker's round view
+        // can lag the commit by seconds. A failed allocate never flips funded
+        // to failed — the money moved, so it is only recorded on the step.
+        const allocation = await allocateWithRetry(wallet, index, true);
         const step: FundStep = {
           wallet,
           decision: "funded",
           reason: `funded +${fromAtomicUsdc(amount)} USDC to round ${roundId}`,
           roundId,
-          approveTxHash: approve.hash,
-          commitTxHash: commit.hash,
+          approveTxHash: approve.txHash,
+          commitTxHash: commit.txHash,
           allocateOk: allocation.ok,
           ...(allocation.error === undefined
             ? {}
@@ -542,8 +510,8 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           wallet,
           decision: step.decision,
           reason: step.reason,
-          approveTxHash: approve.hash,
-          commitTxHash: commit.hash,
+          approveTxHash: approve.txHash,
+          commitTxHash: commit.txHash,
           allocateOk: allocation.ok,
           ...(allocation.error === undefined
             ? {}
@@ -554,7 +522,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           wallet,
           decision: "failed",
           reason: `failed: ${errorMessage(error)}`,
-          approveTxHash: approve.hash,
+          approveTxHash: approve.txHash,
           commitTxHash: null,
           ...attestationFields(att),
         };
