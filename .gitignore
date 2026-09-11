@@ -5,6 +5,7 @@
 node_modules/
 dist/
 coverage/
+*.tsbuildinfo
 
 # Foundry build output (commit src/test/script + foundry.lock, never these)
 contracts/out/
