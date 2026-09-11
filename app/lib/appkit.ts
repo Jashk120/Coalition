@@ -13,7 +13,7 @@ const ARC_CHAIN = "Arc_Testnet" as const;
 export const TREASURY_SETUP_HINT =
   "Create a Circle developer-controlled Arc Testnet wallet for the treasury, " +
   "fund it with testnet USDC at https://faucet.circle.com, then set " +
-  "CIRCLE_TREASURY_WALLET_ID (server-only).";
+  "CIRCLE_TREASURY_WALLET_ID (defaults to CIRCLE_PROVIDER_WALLET_ID when unset).";
 
 export type TreasuryEnv =
   | {
@@ -30,8 +30,13 @@ export function readTreasuryEnv(): TreasuryEnv {
   if (apiKey === "") missing.push("CIRCLE_API_KEY");
   const entitySecret = process.env["CIRCLE_ENTITY_SECRET"] ?? "";
   if (entitySecret === "") missing.push("CIRCLE_ENTITY_SECRET");
-  const treasuryWalletId = process.env["CIRCLE_TREASURY_WALLET_ID"] ?? "";
-  if (treasuryWalletId === "") missing.push("CIRCLE_TREASURY_WALLET_ID");
+  const treasuryWalletId =
+    process.env["CIRCLE_TREASURY_WALLET_ID"] ??
+    process.env["CIRCLE_PROVIDER_WALLET_ID"] ??
+    "";
+  if (treasuryWalletId === "") {
+    missing.push("CIRCLE_TREASURY_WALLET_ID (or CIRCLE_PROVIDER_WALLET_ID)");
+  }
   if (missing.length > 0) {
     return {
       ok: false,

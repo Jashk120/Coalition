@@ -85,7 +85,11 @@ export async function POST(
     const resolved = await Promise.all(
       circleEnv.walletIds.map((walletId) => getWalletAddress(client, walletId)),
     );
-    recipients = resolved.filter((address): address is string => address !== null);
+    recipients = resolved.filter(
+      (address): address is string =>
+        address !== null &&
+        address.toLowerCase() !== treasuryAddress.toLowerCase(),
+    );
   }
   if (recipients.length === 0) {
     return NextResponse.json(

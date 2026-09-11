@@ -75,9 +75,10 @@ USDC=0x3600000000000000000000000000000000000000 PROVIDER=0x... TARGET=10000000 \
   node deploy-pool-circle.mjs
 ```
 
-Requires `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, and
-`CIRCLE_DEPLOYER_WALLET_ID` (an ARC-TESTNET developer-controlled wallet funded
-with testnet USDC — the deployer pays gas). The script prints the deployed
+Requires `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, and a deployer wallet id
+(`CIRCLE_DEPLOYER_WALLET_ID`, else `CIRCLE_PROVIDER_WALLET_ID`) — an
+ARC-TESTNET developer-controlled wallet funded with testnet USDC, since the
+deployer pays gas. The script prints the deployed
 address plus the env lines to repoint the stack. `evm_version = "paris"` in
 `foundry.toml` is load-bearing for this path: Circle Contracts on Arc rejects
 Shanghai/PUSH0 bytecode compiled by the Solidity ≥0.8.20 default.
