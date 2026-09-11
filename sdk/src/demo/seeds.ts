@@ -20,25 +20,25 @@ export const DEMO_SEED_AGENTS: readonly DemoSeedAgent[] = [
     id: "agent-1",
     label: "agent1",
     ensName: "agent1.agentpool.eth",
-    wallet: "0x4f188f3da697984f0fc02e61fda4a34b00abf39a",
+    wallet: "0x0e14d61f2bf9e1a494677257b8855e7ed091d983",
   },
   {
     id: "agent-2",
     label: "agent2",
     ensName: "agent2.agentpool.eth",
-    wallet: "0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b",
+    wallet: "0x253a4751cc35555253666bf90b88ad79b336b079",
   },
   {
     id: "agent-3",
     label: "agent3",
     ensName: "agent3.agentpool.eth",
-    wallet: "0xde086aa43915670c74444b3e5a464d992e1f7770",
+    wallet: "0x336e65d480ceff959ea3245f0ade6dac96af0ee8",
   },
   {
     id: "agent-4",
     label: "agent4",
     ensName: "agent4.agentpool.eth",
-    wallet: "0x0a6415e892972214bceb0271746cb45932f7eaf1",
+    wallet: "0x96ae62a9559dc69f61e07e288ee616e9a6c1bc5f",
   },
 ];
 

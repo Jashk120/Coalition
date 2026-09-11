@@ -29,10 +29,10 @@ and never commits.
 
 | # | subname (`ensName`) | wallet (ENS cross-check only, no fallback) | cpu | mem | share |
 |---|---|---|---|---|---|
-| agent-1 | `agent1.agentpool.eth` | `0x4f188f3da697984f0fc02e61fda4a34b00abf39a` | 0.2 | 800 MB | $2.50 = `2500000` atomic |
-| agent-2 | `agent2.agentpool.eth` | `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b` | 0.15 | 600 MB | $2.50 = `2500000` atomic |
-| agent-3 | `agent3.agentpool.eth` | `0xde086aa43915670c74444b3e5a464d992e1f7770` | 0.1 | 400 MB | $2.50 = `2500000` atomic |
-| agent-4 | `agent4.agentpool.eth` | `0x0a6415e892972214bceb0271746cb45932f7eaf1` | 0.25 | 1000 MB | $2.50 = `2500000` atomic |
+| agent-1 | `agent1.agentpool.eth` | `0x0e14d61f2bf9e1a494677257b8855e7ed091d983` | 0.2 | 800 MB | $2.50 = `2500000` atomic |
+| agent-2 | `agent2.agentpool.eth` | `0x253a4751cc35555253666bf90b88ad79b336b079` | 0.15 | 600 MB | $2.50 = `2500000` atomic |
+| agent-3 | `agent3.agentpool.eth` | `0x336e65d480ceff959ea3245f0ade6dac96af0ee8` | 0.1 | 400 MB | $2.50 = `2500000` atomic |
+| agent-4 | `agent4.agentpool.eth` | `0x96ae62a9559dc69f61e07e288ee616e9a6c1bc5f` | 0.25 | 1000 MB | $2.50 = `2500000` atomic |
 
 Held out: `0x2e07588b8180c8235c2a1be7ffa2639545630dd1` (resale buyer,
 optional `agent5.agentpool.eth` — never commits, stays outside the loop).
@@ -238,14 +238,14 @@ Exact CLI syntax — `--address` is the agent's own seed wallet,
 circle wallet execute "approve(address,uint256)" \
   0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd 2500000 \
   --contract 0x3600000000000000000000000000000000000000 \
-  --address 0x4f188f3da697984f0fc02e61fda4a34b00abf39a \
+  --address 0x0e14d61f2bf9e1a494677257b8855e7ed091d983 \
   --chain ARC-TESTNET
 
 # 2. commit $2.50 — reverts OverTarget past 10.00 / TooManyParticipants past cap
 circle wallet execute "commit(uint256)" \
   2500000 \
   --contract 0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd \
-  --address 0x4f188f3da697984f0fc02e61fda4a34b00abf39a \
+  --address 0x0e14d61f2bf9e1a494677257b8855e7ed091d983 \
   --chain ARC-TESTNET
 ```
 
@@ -324,7 +324,7 @@ After the 4-agent loop, the held-out buyer `0x2e07…` prices spare capacity
 without joining — the §6 Nanopayments beat:
 
 ```sh
-curl -s 'http://localhost:8080/quote?seller=0x4f188f3da697984f0fc02e61fda4a34b00abf39a'
+curl -s 'http://localhost:8080/quote?seller=0x0e14d61f2bf9e1a494677257b8855e7ed091d983'
 circle services search "compute"   # discover-services skill
 circle services pay https://seller.example/compute --address 0x2e07588b8180c8235c2a1be7ffa2639545630dd1 --chain ARC-TESTNET --max-amount 0.01
 ```

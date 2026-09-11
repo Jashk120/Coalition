@@ -23,7 +23,7 @@ import {
 import type { DemoSeedAgent } from "../src/demo/index.js";
 import { AgentId } from "../src/identity/index.js";
 
-const SEED_WALLET = "0x4f188f3da697984f0fc02e61fda4a34b00abf39a" as const;
+const SEED_WALLET = "0x0e14d61f2bf9e1a494677257b8855e7ed091d983" as const;
 const OTHER_WALLET = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const;
 const REVIEWER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as const;
 const RESOLVER = "0x9eae5c2730a7dd16bdd1dee6421a1b91e3b0365e" as const;
