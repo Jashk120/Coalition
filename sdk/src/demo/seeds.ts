@@ -11,33 +11,34 @@ export const DEMO_ARC_COIN_TYPE = ARC_COIN_TYPE;
 
 /**
  * Deterministic 4-agent demo seeds, mirroring `demo/agents.seeds.json`.
- * `wallet` is the cross-check/fallback; live identity comes from `ensName`.
- * Order is the demo run order — never reorder.
+ * `wallet` is the ENS cross-check only — live identity MUST come from
+ * `ensName`, and there is no wallet fallback. Order is the demo run order —
+ * never reorder.
  */
 export const DEMO_SEED_AGENTS: readonly DemoSeedAgent[] = [
   {
     id: "agent-1",
     label: "agent1",
     ensName: "agent1.agentpool.eth",
-    wallet: "0x0427194a9c99599a8bbbcc292b1523be91e4101d",
+    wallet: "0x4f188f3da697984f0fc02e61fda4a34b00abf39a",
   },
   {
     id: "agent-2",
     label: "agent2",
     ensName: "agent2.agentpool.eth",
-    wallet: "0xd1a3c06eb92dfd48fa1bf10ba2071da25e39cd47",
+    wallet: "0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b",
   },
   {
     id: "agent-3",
     label: "agent3",
     ensName: "agent3.agentpool.eth",
-    wallet: "0x072825b4ba2c8019ccceba10e59b29a40980be94",
+    wallet: "0xde086aa43915670c74444b3e5a464d992e1f7770",
   },
   {
     id: "agent-4",
     label: "agent4",
     ensName: "agent4.agentpool.eth",
-    wallet: "0x67bc424b83be66f7f5c4fc2324d4154744f1b310",
+    wallet: "0x0a6415e892972214bceb0271746cb45932f7eaf1",
   },
 ];
 

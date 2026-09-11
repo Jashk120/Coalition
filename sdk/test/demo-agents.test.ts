@@ -23,7 +23,7 @@ import {
 import type { DemoSeedAgent } from "../src/demo/index.js";
 import { AgentId } from "../src/identity/index.js";
 
-const SEED_WALLET = "0x0427194a9c99599a8bbbcc292b1523be91e4101d" as const;
+const SEED_WALLET = "0x4f188f3da697984f0fc02e61fda4a34b00abf39a" as const;
 const OTHER_WALLET = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const;
 const REVIEWER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as const;
 const RESOLVER = "0x9eae5c2730a7dd16bdd1dee6421a1b91e3b0365e" as const;
@@ -167,7 +167,7 @@ const SEED: DemoSeedAgent = {
 };
 
 describe("resolveSeedAgents null handling", () => {
-  it("skips with the seed wallet as fallback when the name has no Arc record", async () => {
+  it("is unresolved when the name has no Arc record (no wallet fallback)", async () => {
     // Given: a subname with no Arc record, and an Arc client that must stay untouched
     const sepoliaClient = sepoliaClientFor(null);
     const arcClient = createPublicClient({
@@ -187,14 +187,14 @@ describe("resolveSeedAgents null handling", () => {
       reviewers: [REVIEWER],
     });
 
-    // Then: skip with reason, wallet fallback attached, no crash
-    expect(resolution?.status).toBe("skipped");
-    if (resolution?.status !== "skipped") throw new Error("expected skip");
-    expect(resolution.fallbackWallet).toBe(SEED_WALLET);
+    // Then: unresolved with reason, no fallback wallet, no crash
+    expect(resolution?.status).toBe("unresolved");
+    if (resolution?.status !== "unresolved") throw new Error("expected unresolved");
     expect(resolution.reason).toContain("no Arc record");
+    expect("fallbackWallet" in resolution).toBe(false);
   });
 
-  it("skips when the resolved wallet mismatches the seed wallet", async () => {
+  it("is unresolved when the resolved wallet mismatches the seed wallet", async () => {
     // Given: ENS resolves to a wallet the seed does not expect
     const sepoliaClient = sepoliaClientFor(OTHER_WALLET);
     const arcClient = arcClientMock({
@@ -211,12 +211,12 @@ describe("resolveSeedAgents null handling", () => {
       reviewers: [REVIEWER],
     });
 
-    // Then: skip names both wallets, seed wallet rides along as fallback
-    expect(resolution?.status).toBe("skipped");
-    if (resolution?.status !== "skipped") throw new Error("expected skip");
+    // Then: unresolved names both wallets, no fallback wallet
+    expect(resolution?.status).toBe("unresolved");
+    if (resolution?.status !== "unresolved") throw new Error("expected unresolved");
     expect(resolution.reason).toContain("mismatch");
     expect(resolution.reason).toContain(OTHER_WALLET);
-    expect(resolution.fallbackWallet).toBe(SEED_WALLET);
+    expect("fallbackWallet" in resolution).toBe(false);
   });
 });
 
@@ -306,7 +306,7 @@ describe("resolveSeedAgents live path", () => {
       reviewers: [REVIEWER],
     });
 
-    // Then: four skips in seed order, each falling back to its own wallet
+    // Then: four unresolved entries in seed order, each with its own reason
     expect(resolutions.map((r) => r.seed.id)).toEqual([
       "agent-1",
       "agent-2",
@@ -314,8 +314,9 @@ describe("resolveSeedAgents live path", () => {
       "agent-4",
     ]);
     for (const resolution of resolutions) {
-      if (resolution.status !== "skipped") throw new Error("expected skip");
-      expect(resolution.fallbackWallet).toBe(resolution.seed.wallet);
+      if (resolution.status !== "unresolved") throw new Error("expected unresolved");
+      expect(resolution.reason).toContain("no Arc record");
+      expect("fallbackWallet" in resolution).toBe(false);
     }
   });
 });

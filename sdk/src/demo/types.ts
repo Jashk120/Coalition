@@ -14,8 +14,10 @@ export class DemoError extends Error {
 
 /**
  * One deterministic demo seed. `ensName` is the live identity
- * (`<label>.agentpool.eth`); `wallet` is retained as the cross-check and as
- * the fallback so the demo runs before Sepolia records land.
+ * (`<label>.agentpool.eth`); `wallet` is retained **only** as the ENS
+ * cross-check — live resolution of `ensName` must equal it. There is no
+ * wallet fallback: a seed that does not resolve live is `unresolved` and
+ * cannot join or fund.
  */
 export type DemoSeedAgent = {
   readonly id: string;
@@ -37,9 +39,10 @@ export type DemoAgentDetail = {
 };
 
 /**
- * Resolution outcome per seed, in seed order. `skipped` is normal output
- * (missing Arc record, wallet mismatch) — never an exception — and always
- * carries the seed wallet so the runner can fall back deterministically.
+ * Resolution outcome per seed, in seed order. `unresolved` is normal output
+ * (missing Arc record, wallet mismatch) — never an exception — and carries
+ * **no wallet**: ENS is the only identity source, so an unresolved seed is
+ * ineligible to join or fund. Callers must not substitute `seed.wallet`.
  */
 export type DemoAgentResolution =
   | {
@@ -49,8 +52,7 @@ export type DemoAgentResolution =
       readonly agents: readonly DemoAgentDetail[];
     }
   | {
-      readonly status: "skipped";
+      readonly status: "unresolved";
       readonly seed: DemoSeedAgent;
       readonly reason: string;
-      readonly fallbackWallet: Address;
     };

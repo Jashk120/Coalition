@@ -97,9 +97,10 @@ async function findDropoutClient(params: {
  * ENS-first resolution for one seed: subname → Arc wallet → agent ids →
  * per-id identity + reputation + dropout scan.
  *
- * Returns `skipped` (never throws) when the name has no Arc record or the
- * resolved wallet mismatches the seed wallet; the seed wallet rides along
- * as `fallbackWallet` so the demo runs before Sepolia records land.
+ * Returns `unresolved` (never throws) when the name has no Arc record or the
+ * resolved wallet mismatches the seed wallet. ENS is the only identity
+ * source — there is no wallet fallback, so an unresolved seed is ineligible
+ * to join or fund.
  */
 export async function resolveSeedAgent(
   params: ResolveSeedAgentParams,
@@ -124,20 +125,20 @@ export async function resolveSeedAgent(
   });
   if (resolved === null) {
     return {
-      status: "skipped",
+      status: "unresolved",
       seed: params.seed,
-      reason: `no Arc record for "${params.seed.ensName}"; falling back to seed wallet ${params.seed.wallet}`,
-      fallbackWallet: params.seed.wallet,
+      reason:
+        `no Arc record for "${params.seed.ensName}": ENS is mandatory ` +
+        `(no wallet fallback)`,
     };
   }
   if (resolved.arcWallet.toLowerCase() !== params.seed.wallet.toLowerCase()) {
     return {
-      status: "skipped",
+      status: "unresolved",
       seed: params.seed,
       reason:
         `arc wallet mismatch for "${params.seed.ensName}": ` +
         `ENS resolves to ${resolved.arcWallet}, seed expects ${params.seed.wallet}`,
-      fallbackWallet: params.seed.wallet,
     };
   }
   const details: DemoAgentDetail[] = [];
@@ -189,7 +190,8 @@ export async function resolveSeedAgent(
 /**
  * ENS-first resolution for every seed, sequentially in seed order so the
  * demo run stays deterministic. Each entry is independently resolved or
- * skipped — one missing Arc record never aborts the rest.
+ * unresolved — one missing Arc record never aborts the rest, but it is never
+ * substituted with a hardcoded wallet either.
  */
 export async function resolveSeedAgents(
   params: ResolveSeedAgentsParams,
