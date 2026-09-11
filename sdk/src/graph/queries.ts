@@ -42,11 +42,21 @@ const POOL_FILL_QUERY = `query GetPoolFill($id: ID!) {
   }
 }`;
 
-const COMMITMENTS_QUERY = `query GetCommitments($pool: String!, $wallet: String) {
+// Unset nullable $wallet coerces to null and filters wallet=null, so
+// all-wallets and one-wallet reads cannot share one document.
+const COMMITMENTS_QUERY = `query GetCommitments($pool: String!) {
+  commitments(where: { pool: $pool }) {
+    wallet
+    amount
+    blockNumber: block
+  }
+}`;
+
+const COMMITMENTS_BY_WALLET_QUERY = `query GetCommitmentsByWallet($pool: String!, $wallet: String!) {
   commitments(where: { pool: $pool, wallet: $wallet }) {
     wallet
     amount
-    blockNumber
+    blockNumber: block
   }
 }`;
 
@@ -156,11 +166,13 @@ export async function getCommitments(
   if (wallet !== undefined && !ADDRESS_PATTERN.test(wallet)) {
     throw new GraphError(`wallet "${wallet}" is not an address`);
   }
-  const variables: Record<string, string> = { pool: pool.toLowerCase() };
-  if (wallet !== undefined) {
-    variables["wallet"] = wallet.toLowerCase();
-  }
-  const data = await postQuery(client, COMMITMENTS_QUERY, variables);
+  const data =
+    wallet === undefined
+      ? await postQuery(client, COMMITMENTS_QUERY, { pool: pool.toLowerCase() })
+      : await postQuery(client, COMMITMENTS_BY_WALLET_QUERY, {
+          pool: pool.toLowerCase(),
+          wallet: wallet.toLowerCase(),
+        });
   const raw = data["commitments"];
   if (!Array.isArray(raw)) {
     throw new GraphError('graph field "commitments" is not an array');

@@ -158,6 +158,55 @@ describe("getCommitments", () => {
     // When/Then: status surfaces as GraphError
     await expect(getCommitments(client(), POOL)).rejects.toThrow(GraphError);
   });
+
+  it("filters by pool only when no wallet is given", async () => {
+    // Given: a fetch that records the outgoing request body
+    const calls: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        calls.push(init);
+        return new Response(JSON.stringify(wireCommitments([])), { status: 200 });
+      }),
+    );
+
+    // When: fetching every commitment in the pool
+    await getCommitments(client(), POOL);
+
+    // Then: no unset wallet variable reaches the subgraph
+    const body = JSON.parse(String(calls[0]?.body)) as {
+      query: string;
+      variables: Record<string, string>;
+    };
+    expect(body.query).not.toContain("wallet: $wallet");
+    expect(body.variables).toEqual({ pool: POOL.toLowerCase() });
+  });
+
+  it("filters by wallet when one is given", async () => {
+    // Given: a fetch that records the outgoing request body
+    const calls: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        calls.push(init);
+        return new Response(JSON.stringify(wireCommitments([])), { status: 200 });
+      }),
+    );
+
+    // When: fetching one wallet's commitments
+    await getCommitments(client(), POOL, WALLET);
+
+    // Then: the wallet filter and variable both carry through
+    const body = JSON.parse(String(calls[0]?.body)) as {
+      query: string;
+      variables: Record<string, string>;
+    };
+    expect(body.query).toContain("wallet: $wallet");
+    expect(body.variables).toEqual({
+      pool: POOL.toLowerCase(),
+      wallet: WALLET.toLowerCase(),
+    });
+  });
 });
 
 describe("getDropouts", () => {
