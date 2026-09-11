@@ -165,12 +165,17 @@ func (s *Server) handleFillPlan(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, s.logger, fmt.Errorf("ledger usage %q: %w", wstr, err))
 			return
 		}
+		ent, err := s.ledger.Entitlement(addr)
+		if err != nil {
+			writeJSONError(w, s.logger, fmt.Errorf("ledger entitlement %q: %w", wstr, err))
+			return
+		}
 		cost, err := imputedCost(usage, rateMB, rateCU, s.cfg.WindowHours)
 		if err != nil {
 			writeJSONError(w, s.logger, badRequest(err.Error()))
 			return
 		}
-		used[wstr] = cost
+		used[wstr] = new(big.Int).Add(sliceValue(ent, rateMB, rateCU), cost)
 		agents = append(agents, wstr)
 	}
 	shares, err := store.PayoutShares(locked, used)
@@ -222,6 +227,19 @@ func (s *Server) handleFillPlan(w http.ResponseWriter, r *http.Request) {
 		HeadroomMB:      freeMem,
 		HeadroomCUMicro: freeMicro,
 	})
+}
+
+// sliceValue prices a granted slice at cost basis with bigint math only:
+// floor(cpuMicro*rateCU/1e6 + memMB*rateMB). Payout skew subtracts this from
+// the lock together with burned usage, so equal locks on unequal slices
+// split correctly: the wallet overpaying per unit of compute keeps the
+// larger unrecouped share. Integer micro-CU throughout, no float.
+func sliceValue(ent domain.Entitlement, rateMB, rateCU *big.Int) *big.Int {
+	cu := new(big.Int).Quo(
+		new(big.Int).Mul(big.NewInt(store.MicroCU(ent.CPU)), rateCU),
+		big.NewInt(1_000_000),
+	)
+	return new(big.Int).Add(cu, new(big.Int).Mul(big.NewInt(ent.MemMB), rateMB))
 }
 
 // imputedCost prices burned usage at cost basis with bigint math only:

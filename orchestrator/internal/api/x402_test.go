@@ -43,10 +43,10 @@ func fillPlanFixture(t *testing.T) fixture {
 		allocate(t, f, w, 0.2, 800)
 	}
 	stub := f.srv.verifier.(*stubVerifier)
-	stub.committed[testWalletA] = big.NewInt(2000000)
-	stub.committed[testWalletB] = big.NewInt(1000000)
-	stub.committed[testWalletC] = big.NewInt(1000000)
-	stub.committed[testWalletD] = big.NewInt(1000000)
+	stub.committed[testWalletA] = big.NewInt(3000000)
+	stub.committed[testWalletB] = big.NewInt(2500000)
+	stub.committed[testWalletC] = big.NewInt(2500000)
+	stub.committed[testWalletD] = big.NewInt(2500000)
 	return f
 }
 
@@ -116,6 +116,27 @@ func Test_X402_fill_plan_happy(t *testing.T) {
 	}
 }
 
+func Test_X402_fill_plan_small_slice_gets_more(t *testing.T) {
+	f := settledV2Fixture(t, 7)
+	allocate(t, f, testWalletA, 0.25, 1000)
+	allocate(t, f, testWalletB, 0.1, 400)
+	stub := f.srv.verifier.(*stubVerifier)
+	stub.committed[testWalletA] = big.NewInt(2500000)
+	stub.committed[testWalletB] = big.NewInt(2500000)
+
+	code, plan := postFillPlan(t, f, testWalletF, 0.05, 100)
+	if code != http.StatusOK {
+		t.Fatalf("fill-plan: status=%d", code)
+	}
+	if len(plan.Outputs) != 2 {
+		t.Fatalf("want 2 outputs, got %+v", plan.Outputs)
+	}
+	got := planAmounts(t, plan)
+	if got[testWalletB].Cmp(got[testWalletA]) <= 0 {
+		t.Fatalf("equal locks on unequal slices: small-slice B must beat A, got %+v", plan.Outputs)
+	}
+}
+
 func Test_X402_fill_plan_dust_exact(t *testing.T) {
 	f := fillPlanFixture(t)
 	stub := f.srv.verifier.(*stubVerifier)
@@ -136,10 +157,10 @@ func Test_X402_fill_plan_dust_exact(t *testing.T) {
 	if sum.String() != plan.TotalAtomic {
 		t.Fatalf("outputs sum = %q, totalAtomic = %q: must match exactly", sum, plan.TotalAtomic)
 	}
-	if got[testWalletC].String() != "62204" {
-		t.Fatalf("first wallet-asc output C = %q, want 62204 (floor 62203 + 1 dust unit)", got[testWalletC])
+	if got[testWalletC].String() != "75335" {
+		t.Fatalf("first wallet-asc output C = %q, want 75335 (floor 75334 + 1 dust unit)", got[testWalletC])
 	}
-	if got[testWalletD].String() != "62203" || got[testWalletB].String() != "62203" {
+	if got[testWalletD].String() != "75334" || got[testWalletB].String() != "75334" {
 		t.Fatalf("dust must go wallet-asc first, got %+v", plan.Outputs)
 	}
 }
