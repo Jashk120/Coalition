@@ -69,9 +69,9 @@ Held out (never a subname, never commits): resale buyer
 `0x2e07588b8180c8235c2a1be7ffa2639545630dd1`.
 
 > **Pending re-point (2026-09-11).** These Arc records are being re-pointed to
-> the Circle funder wallets in §7b because the seed wallets' private keys are
-> not held. The values above are the pre-re-point state; §7b lists the target
-> addresses and the command.
+> the fresh self-custody wallets in §7b because the original seed wallets'
+> private keys are not held. The values above are the pre-re-point state; §7b
+> lists the target addresses and the command.
 
 ### Live verification (2026-09-11, Sepolia `https://ethereum-sepolia-rpc.publicnode.com`)
 
@@ -208,31 +208,33 @@ current path.
   fund step shows an `"ENS attested"` / `"ENS unattested"` badge with a
   title of the ENS to wallet mapping.
 
-Operator alignment (chosen: re-point ENS to the Circle funders). The ENS Arc
-records currently point at four seed wallets (`0x0427…`, `0xd1a3…`,
-`0x0728…`, `0x67bc…`) whose private keys the operator does not hold, while the
-signing wallets are the app's Circle funders. Re-point each
-`agentN.agentpool.eth` Arc record at the matching Circle funder — index order
-matches `CIRCLE_WALLET_IDS`:
+Operator alignment (chosen: self-custody). The ENS Arc records currently point
+at four seed wallets (`0x0427…`, `0xd1a3…`, `0x0728…`, `0x67bc…`) whose
+private keys are not held and are not recoverable (Circle never exposes keys;
+no local key material for them exists). Four fresh self-custody wallets were
+generated; their private keys are stored locally outside the repo at
+`~/.coalition/seed-keys.json` (mode 600). Re-point each `agentN.agentpool.eth`
+Arc record at the matching new wallet:
 
-| agent | ENS name | target wallet (Circle funder) |
+| agent | ENS name | target wallet (self-custody) |
 |---|---|---|
-| agent-1 | `agent1.agentpool.eth` | `0x4f188f3da697984f0fc02e61fda4a34b00abf39a` |
-| agent-2 | `agent2.agentpool.eth` | `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b` |
-| agent-3 | `agent3.agentpool.eth` | `0xde086aa43915670c74444b3e5a464d992e1f7770` |
-| agent-4 | `agent4.agentpool.eth` | `0x0a6415e892972214bceb0271746cb45932f7eaf1` |
+| agent-1 | `agent1.agentpool.eth` | `0x0e14d61f2bf9e1a494677257b8855e7ed091d983` |
+| agent-2 | `agent2.agentpool.eth` | `0x253a4751cc35555253666bf90b88ad79b336b079` |
+| agent-3 | `agent3.agentpool.eth` | `0x336e65d480ceff959ea3245f0ade6dac96af0ee8` |
+| agent-4 | `agent4.agentpool.eth` | `0x96ae62a9559dc69f61e07e288ee616e9a6c1bc5f` |
 
 Command (owner/resolver-admin key `0x78F3…`; one `setAddr` write per name):
 
 ```sh
 cd app
 SEPOLIA_PRIVATE_KEY=<owner key> node scripts/repoint-ens.mjs \
-  --map agent1=0x4f188f3da697984f0fc02e61fda4a34b00abf39a,agent2=0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b,agent3=0xde086aa43915670c74444b3e5a464d992e1f7770,agent4=0x0a6415e892972214bceb0271746cb45932f7eaf1
+  --map agent1=0x0e14d61f2bf9e1a494677257b8855e7ed091d983,agent2=0x253a4751cc35555253666bf90b88ad79b336b079,agent3=0x336e65d480ceff959ea3245f0ade6dac96af0ee8,agent4=0x96ae62a9559dc69f61e07e288ee616e9a6c1bc5f
 ```
 
-The SDK/app seed `wallet` constants now expect these Circle addresses, so the
-cross-check passes only after the re-point. Then fund the Circle wallets with
-ERC-20 USDC (all were at 0 when written). §3's table still shows the
+The SDK/app seed `wallet` constants now expect these addresses, so the
+cross-check passes only after the re-point. Then fund the four wallets with
+Arc testnet USDC and switch `POST /api/agents/fund` to sign with the local
+keys (self-custody) instead of Circle. §3's table still shows the
 pre-re-point state and will be updated with the new `setAddr` tx hashes once
 the re-point runs.
 
