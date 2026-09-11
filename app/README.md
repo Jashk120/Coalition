@@ -59,7 +59,13 @@ the agents that pay into the pool. `CIRCLE_DEPLOYER_WALLET_ID` (used only by
   Developer-Controlled Wallets (parallel USDC approves, strictly sequential
   pool commits sharing one remainder snapshot, last commit auto-settles);
   returns `FundStep` lines with on-chain hashes, 503 without `CIRCLE_*` env.
-  Each funded wallet also provisions its orchestrator slice (see Fund flow).
+  ENS is **mandatory**: before any approve/commit it resolves each funder's
+  `agentN.agentpool.eth` Arc record and requires
+  `funderWallet === ensWallet`; a mismatch or missing record fails the step
+  with no transaction (`ensName`/`ensWallet`/`funderWallet`/`ensAttested` are
+  reported per step). Align funders first via `node scripts/repoint-ens.mjs`
+  (see [`../ENS.md`](../ENS.md)). Each funded wallet also provisions its
+  orchestrator slice (see Fund flow).
 - `POST /api/agents/treasury` — App Kit (`@circle-fin/app-kit` + Circle Wallets
   adapter) re-funds agents for the next round from `CIRCLE_TREASURY_WALLET_ID`
   via `kit.send`. Body `{to?, amountUsdc?}`: tops each recipient up to

@@ -82,9 +82,8 @@ async function resolveWithRetry(
         }
         return {
           seedId: entry.seed.id,
-          status: "skipped",
+          status: "unresolved",
           reason: entry.reason,
-          fallbackWallet: entry.fallbackWallet,
         };
       });
     } catch (error) {
@@ -120,17 +119,16 @@ export async function GET(): Promise<NextResponse<AgentsResponse>> {
       resolutions = await resolveWithRetry(reviewers);
       resolutionCache = { at: Date.now(), resolutions };
     } catch (error) {
-      const reason = `live resolution unavailable (${shortReason(error)}); showing seed fallbacks`;
-      log("warn", "agents.resolve.fallback", {
+      const reason = `live ENS resolution unavailable (${shortReason(error)}); agents cannot join or fund until it recovers`;
+      log("warn", "agents.resolve.unavailable", {
         route: "GET /api/agents",
         reason,
       });
       resolutions = SEED_META.map(
         (seed): ResolutionView => ({
           seedId: seed.id,
-          status: "skipped",
+          status: "unresolved",
           reason,
-          fallbackWallet: seed.wallet,
         }),
       );
     }

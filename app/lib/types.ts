@@ -32,9 +32,8 @@ export type ResolutionView =
     }
   | {
       readonly seedId: string;
-      readonly status: "skipped";
+      readonly status: "unresolved";
       readonly reason: string;
-      readonly fallbackWallet: string;
     };
 
 export type AgentsResponse =
@@ -143,7 +142,24 @@ export type RosterResponse =
     }
   | { readonly ok: false; readonly error: string };
 
-export type FundStep = { readonly walletId: string; readonly decision: "funded" | "skipped" | "failed"; readonly reason: string; readonly roundId?: string; readonly approveTxHash: string | null; readonly commitTxHash: string | null; readonly allocateOk?: boolean; readonly allocateError?: string };
+export type FundStep = {
+  readonly walletId: string;
+  readonly decision: "funded" | "skipped" | "failed";
+  readonly reason: string;
+  readonly roundId?: string;
+  readonly approveTxHash: string | null;
+  readonly commitTxHash: string | null;
+  readonly allocateOk?: boolean;
+  readonly allocateError?: string;
+  /** ENS subname that attests the funder (e.g. `agent1.agentpool.eth`). */
+  readonly ensName?: string;
+  /** Live ENS-resolved Arc wallet for `ensName`; null when the name has no Arc record. */
+  readonly ensWallet?: string | null;
+  /** The Circle funder's on-chain address; null when Circle lookup failed. */
+  readonly funderWallet?: string | null;
+  /** True only when `funderWallet === ensWallet` (case-insensitive). ENS is load-bearing. */
+  readonly ensAttested?: boolean;
+};
 export type FundResponse = { readonly ok: true; readonly pool: string; readonly roundId?: string; readonly steps: readonly FundStep[] } | { readonly ok: false; readonly error: string };
 
 export type RotateResult = { readonly closedRoundId: string; readonly newRoundId: string; readonly finalizeTxHash: string | null; readonly startRoundTxHash: string };

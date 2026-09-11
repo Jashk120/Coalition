@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import {
   DEMO_SEED_AGENTS,
   fromAtomicUsdc,
+  resolveSeedAgents,
 } from "@jx-nexus/coalition";
-import { SHARE_ATOMIC } from "@/lib/constants";
+import { IDENTITY_REGISTRY_FROM_BLOCK, SHARE_ATOMIC } from "@/lib/constants";
+import { arcPublicClient, sepoliaPublicClient } from "@/lib/chain";
 import { log } from "@/lib/logger";
 import { readCurrentRound, readPoolState } from "@/lib/pool-state";
 import type { AgentDecision, RunResponse } from "@/lib/types";
@@ -12,6 +14,18 @@ export const dynamic = "force-dynamic";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${String(ms)}ms`));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }
 
 /**
@@ -35,6 +49,22 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
   try {
     let running: bigint = BigInt(pool.view.totalCommitted);
     const decisions: AgentDecision[] = [];
+    // ENS is mandatory: resolve every seed live before any join decision.
+    // No hardcoded wallet fallback — an unresolved seed cannot join.
+    const resolutions = await withTimeout(
+      resolveSeedAgents({
+        sepoliaClient: sepoliaPublicClient(),
+        arcClient: arcPublicClient(),
+        seeds: DEMO_SEED_AGENTS,
+        reviewers: DEMO_SEED_AGENTS.map((seed) => seed.wallet),
+        fromBlock: IDENTITY_REGISTRY_FROM_BLOCK,
+      }),
+      30_000,
+      "resolveSeedAgents",
+    ).catch((): null => null);
+    const resolutionById = new Map(
+      (resolutions ?? []).map((entry) => [entry.seed.id, entry]),
+    );
     for (const [index, seed] of DEMO_SEED_AGENTS.entries()) {
       const round = await readCurrentRound();
       const roundId = round.view.roundId;
@@ -42,6 +72,25 @@ export async function POST(): Promise<NextResponse<RunResponse>> {
       const liveTotal: bigint = BigInt(round.view.totalCommitted);
       if (liveTotal > running) running = liveTotal;
       const before = running;
+      const resolution = resolutionById.get(seed.id);
+      if (resolution === undefined || resolution.status !== "resolved") {
+        const reason =
+          resolution === undefined
+            ? `skip: ENS resolution unavailable for "${seed.ensName}"`
+            : `skip: ENS unresolved — ${resolution.reason}`;
+        decisions.push({
+          agent: seed.id,
+          decision: "skip",
+          reason,
+          amountAtomic: "0",
+          poolFillBefore: before.toString(),
+          poolFillAfter: before.toString(),
+          roundId,
+          approveHash: null,
+          commitHash: null,
+        });
+        continue;
+      }
       if (round.view.settled || round.view.expired) {
         decisions.push({
           agent: seed.id,

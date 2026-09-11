@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fromAtomicUsdc } from "@jx-nexus/coalition";
+import { fromAtomicUsdc, resolveArcWallet } from "@jx-nexus/coalition";
 import { POOL_ADDRESS, SEED_META, SHARE_ATOMIC } from "@/lib/constants";
 import {
   USDC_ADDRESS,
@@ -8,6 +8,7 @@ import {
   getWalletAddress,
   readCircleEnv,
 } from "@/lib/circle-fund";
+import { sepoliaPublicClient } from "@/lib/chain";
 import { log } from "@/lib/logger";
 import { orchestratorBaseUrl, readCurrentRound } from "@/lib/pool-state";
 import type { FundResponse, FundStep } from "@/lib/types";
@@ -16,6 +17,18 @@ export const dynamic = "force-dynamic";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${String(ms)}ms`));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }
 
 /** Server-side app key only — never a NEXT_PUBLIC_ value. */
@@ -60,15 +73,94 @@ function isTerminalSettleDenial(error: string | undefined): boolean {
   );
 }
 
+type FunderAttestation = {
+  readonly index: number;
+  readonly walletId: string;
+  readonly ensName: string | null;
+  readonly ensWallet: string | null;
+  readonly funderWallet: string | null;
+  readonly ok: boolean;
+  readonly note?: string;
+};
+
+/**
+ * Attest one Circle funder against its ENS subname: `funderWallet` MUST equal
+ * the live `agentN.agentpool.eth` Arc record. This is the load-bearing ENS
+ * check — a funder that is not named by ENS can never approve or commit.
+ */
+async function attestFunder(params: {
+  readonly client: Parameters<typeof getWalletAddress>[0];
+  readonly walletId: string;
+  readonly index: number;
+}): Promise<FunderAttestation> {
+  const ensName = SEED_META[params.index]?.ensName ?? null;
+  const funderWallet = await getWalletAddress(params.client, params.walletId);
+  let ensWallet: string | null = null;
+  let note: string | undefined;
+  if (ensName === null) {
+    note = `no ENS subname configured for funder index ${params.index}`;
+  } else {
+    try {
+      ensWallet = await withTimeout(
+        resolveArcWallet({ publicClient: sepoliaPublicClient(), name: ensName }),
+        20_000,
+        `resolveArcWallet(${ensName})`,
+      );
+    } catch (error) {
+      note = `ENS lookup failed for "${ensName}": ${errorMessage(error)}`;
+    }
+  }
+  const ok =
+    ensName !== null &&
+    ensWallet !== null &&
+    funderWallet !== null &&
+    ensWallet.toLowerCase() === funderWallet.toLowerCase();
+  if (!ok && note === undefined) {
+    note =
+      funderWallet === null
+        ? "Circle funder address unavailable"
+        : ensWallet === null
+          ? `no Arc record for "${ensName ?? `index ${params.index}`}"`
+          : `funder ${funderWallet} != ENS wallet ${ensWallet} for "${ensName}"`;
+  }
+  return {
+    index: params.index,
+    walletId: params.walletId,
+    ensName,
+    ensWallet,
+    funderWallet,
+    ok,
+    ...(note === undefined ? {} : { note }),
+  };
+}
+
+type AttestedFunder = {
+  readonly index: number;
+  readonly walletId: string;
+  readonly ensName: string | null;
+  readonly ensWallet: string;
+  readonly funderWallet: string;
+  readonly ok: true;
+};
+
+function attestationFields(att: FunderAttestation): Pick<
+  FundStep,
+  "ensName" | "ensWallet" | "funderWallet" | "ensAttested"
+> {
+  return {
+    ...(att.ensName === null ? {} : { ensName: att.ensName }),
+    ensWallet: att.ensWallet,
+    funderWallet: att.funderWallet,
+    ensAttested: att.ok,
+  };
+}
+
 async function allocateWithRetry(
-  client: Parameters<typeof getWalletAddress>[0],
-  walletId: string,
+  wallet: string,
   index: number,
   justFunded = false,
 ): Promise<{ readonly ok: boolean; readonly error?: string }> {
-  const funderAddress = await getWalletAddress(client, walletId);
   const seed = SEED_META[index];
-  const wallet = funderAddress ?? seed?.wallet ?? walletId;
   const cpu = seed?.cpu ?? 0.1;
   const memMB = seed?.memMB ?? 400;
   const deadline = Date.now() + 12_000;
@@ -156,6 +248,21 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
   try {
     const slots: { readonly index: number; readonly step: FundStep }[] = [];
     let fundedRoundId: string | undefined;
+    // ENS attestation pre-pass: every funder must be named by a subname whose
+    // live Arc record equals the Circle funder address. Unattested funders
+    // never reach approve/commit — ENS is load-bearing, not cosmetic.
+    const attestations = new Map<number, FunderAttestation>();
+    for (const [index, walletId] of env.walletIds.entries()) {
+      attestations.set(index, await attestFunder({ client, walletId, index }));
+    }
+    const attestedLeftFrom = (index: number): number =>
+      [...attestations.values()].filter((att) => att.ok && att.index >= index)
+        .length;
+    log("info", "agents.fund.attest", {
+      route: "POST /api/agents/fund",
+      attested: [...attestations.values()].filter((att) => att.ok).length,
+      total: attestations.size,
+    });
     // Phase 1 — sequential gating reads in seed order (order is the demo
     // run order and must never change). Amounts split one snapshot
     // remainder locally: identical math to per-iteration re-reads when
@@ -167,6 +274,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
       readonly roundId: string;
       readonly amount: bigint;
       readonly shareAmount: string;
+      readonly att: AttestedFunder;
     };
     const jobs: FundJob[] = [];
     const opening = await readCurrentRound().catch((): null => null);
@@ -203,11 +311,32 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           : 0n;
       const closed = opening.view.settled || opening.view.expired;
       for (const [index, walletId] of env.walletIds.entries()) {
+        const att = attestations.get(index);
+        const attWallet = att?.ensWallet ?? null;
+        if (att === undefined || !att.ok || attWallet === null) {
+          const step: FundStep = {
+            walletId,
+            decision: "failed",
+            reason: `ENS attestation failed: ${att?.note ?? "unknown funder"}`,
+            roundId,
+            approveTxHash: null,
+            commitTxHash: null,
+            ...(att === undefined ? {} : attestationFields(att)),
+          };
+          slots.push({ index, step });
+          log("info", "agents.fund.step", {
+            walletId,
+            decision: step.decision,
+            reason: step.reason,
+            ensAttested: false,
+          });
+          continue;
+        }
         if (closed) {
           // Repair path: funding is done but the slice may be missing
           // (earlier 409s from round-tracker lag). Proven participants can
           // still allocate post-settle, so try before skipping.
-          const allocation = await allocateWithRetry(client, walletId, index);
+          const allocation = await allocateWithRetry(attWallet, index);
           const step: FundStep = {
             walletId,
             decision: "skipped",
@@ -219,6 +348,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             ...(allocation.error === undefined
               ? {}
               : { allocateError: allocation.error }),
+            ...attestationFields(att),
           };
           slots.push({ index, step });
           log("info", "agents.fund.step", {
@@ -226,6 +356,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             decision: step.decision,
             reason: step.reason,
             allocateOk: allocation.ok,
+            ensAttested: true,
           });
           continue;
         }
@@ -240,6 +371,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             roundId,
             approveTxHash: null,
             commitTxHash: null,
+            ...attestationFields(att),
           };
           slots.push({ index, step });
           log("info", "agents.fund.step", {
@@ -249,7 +381,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           });
           continue;
         }
-        const walletsLeft = env.walletIds.length - index;
+        const walletsLeft = attestedLeftFrom(index);
         let amount = SHARE_ATOMIC;
         const evenSplit = remaining / BigInt(walletsLeft);
         if (evenSplit < amount) amount = evenSplit > 0n ? evenSplit : remaining;
@@ -265,6 +397,14 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           roundId,
           amount,
           shareAmount: amount.toString(),
+          att: {
+            index: att.index,
+            walletId: att.walletId,
+            ensName: att.ensName,
+            ensWallet: attWallet,
+            funderWallet: att.funderWallet ?? attWallet,
+            ok: true,
+          },
         });
       }
     }
@@ -285,7 +425,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
     // Phase 3 — sequential commits in seed order. Commits share the round
     // remainder and the last one auto-settles, so they must not race.
     for (const [jobAt, job] of jobs.entries()) {
-      const { walletId, index, roundId, amount, shareAmount } = job;
+      const { walletId, index, roundId, amount, shareAmount, att } = job;
       const approve = approvals[jobAt];
       if (approve === undefined || !approve.ok) {
         const step: FundStep = {
@@ -295,6 +435,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           roundId,
           approveTxHash: null,
           commitTxHash: null,
+          ...attestationFields(att),
         };
         slots.push({ index, step });
         log("info", "agents.fund.step", {
@@ -328,6 +469,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             roundId,
             approveTxHash: approve.txHash,
             commitTxHash: null,
+            ...attestationFields(att),
           };
           slots.push({ index, step });
           log("info", "agents.fund.step", {
@@ -341,12 +483,12 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
 
         // Provision the VPS slice right after the commit lands: one fund
         // click funds on-chain AND allocates compute. The slice goes to the
-        // actual funder address (Circle wallet), not the display seed
-        // wallet — post-settle the orchestrator only honors proven
-        // participants. Retried: the tracker's round view can lag the commit
-        // by seconds. A failed allocate never flips funded to failed —
-        // the money moved, so it is only recorded on the step.
-        const allocation = await allocateWithRetry(client, walletId, index, true);
+        // ENS-attested funder address (== the Circle wallet), so the
+        // orchestrator's entitlement is keyed to the same identity ENS names.
+        // Retried: the tracker's round view can lag the commit by seconds. A
+        // failed allocate never flips funded to failed — the money moved, so
+        // it is only recorded on the step.
+        const allocation = await allocateWithRetry(att.ensWallet, index, true);
         const step: FundStep = {
           walletId,
           decision: "funded",
@@ -358,6 +500,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           ...(allocation.error === undefined
             ? {}
             : { allocateError: allocation.error }),
+          ...attestationFields(att),
         };
         slots.push({ index, step });
         fundedRoundId = roundId;
@@ -379,6 +522,7 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
           reason: `failed: ${errorMessage(error)}`,
           approveTxHash: null,
           commitTxHash: null,
+          ...attestationFields(att),
         };
         slots.push({ index, step });
         log("info", "agents.fund.step", {

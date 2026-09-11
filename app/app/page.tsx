@@ -901,6 +901,23 @@ export default function DashboardPage() {
                           </span>
                         </div>
                       ) : null}
+                      {step.ensAttested !== undefined ? (
+                        <div>
+                          <span
+                            className={
+                              step.ensAttested ? "pill pill-ok" : "pill pill-bad"
+                            }
+                            title={
+                              step.ensWallet === null ||
+                              step.ensWallet === undefined
+                                ? `no ENS Arc record for ${step.ensName ?? "?"}`
+                                : `ENS ${step.ensName ?? "?"} → ${step.ensWallet}; funder ${step.funderWallet ?? "?"}`
+                            }
+                          >
+                            {step.ensAttested ? "ENS attested" : "ENS unattested"}
+                          </span>
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -1261,10 +1278,10 @@ export default function DashboardPage() {
                             className="pill pill-warn"
                             title={resolution.reason}
                           >
-                            skipped
+                            unresolved
                           </span>
                         )}
-                        {resolution?.status === "skipped" ? (
+                        {resolution?.status === "unresolved" ? (
                           <div className="mono">{resolution.reason}</div>
                         ) : null}
                       </td>
