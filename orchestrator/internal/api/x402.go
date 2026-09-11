@@ -396,7 +396,7 @@ func (s *Server) handleTransferMulti(w http.ResponseWriter, r *http.Request, req
 
 const commitMintMulticall = "0xcA11bde05977b3631167028862bE2a173976CA11"
 const commitMintUSDC = "0x3600000000000000000000000000000000000000"
-const commitMintTransferSig = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4ad29a65c048aa384f"
+const commitMintTransferSig = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
 type commitMintOutput struct {
 	Account      string `json:"account"`

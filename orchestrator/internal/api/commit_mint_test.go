@@ -169,3 +169,12 @@ func Test_CommitMint_auth_tier(t *testing.T) {
 		t.Fatalf("wrong key: status=%d body=%s, want 403", rec.Code, rec.Body.String())
 	}
 }
+
+// Pins the topic to the literal the chain emits; asserting the constant against
+// itself would be circular because commitMintReceipt builds logs from it too.
+func Test_CommitMint_transferTopicIsCanonicalERC20(t *testing.T) {
+	const want = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	if commitMintTransferSig != want {
+		t.Fatalf("commitMintTransferSig = %q, want %q", commitMintTransferSig, want)
+	}
+}

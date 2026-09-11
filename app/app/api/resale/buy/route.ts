@@ -187,8 +187,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   const payload = (await upstream.json().catch(() => null)) as unknown;
   if (!upstream.ok) {
     const detail =
-      isRecord(payload) && typeof payload["error"] === "string"
-        ? payload["error"]
+      isRecord(payload) && typeof payload["message"] === "string"
+        ? payload["message"]
         : `commit-mint returned ${String(upstream.status)}`;
     log("warn", "resale.buy.commit_failed", {
       route: "POST /api/resale/buy",
