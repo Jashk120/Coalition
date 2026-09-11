@@ -123,9 +123,77 @@ if (mapArg !== undefined) {
   targets = await targetsFromCircle();
 }
 
-const privateKey = process.env.SEPOLIA_PRIVATE_KEY;
-if (!/^0x[0-9a-fA-F]{64}$/.test(privateKey ?? "") && !dryRun) {
-  throw new Error("SEPOLIA_PRIVATE_KEY is required (owner/resolver-admin key)");
+async function promptHidden(prompt) {
+  process.stdout.write(prompt);
+  const stdin = process.stdin;
+  const wasRaw = stdin.isRaw;
+  if (stdin.isTTY) stdin.setRawMode(true);
+  stdin.resume();
+  return await new Promise((resolve) => {
+    let value = "";
+    const onData = (buf) => {
+      for (const ch of buf.toString("utf8")) {
+        if (ch === "\r" || ch === "\n") {
+          stdin.removeListener("data", onData);
+          if (stdin.isTTY) stdin.setRawMode(wasRaw ?? false);
+          stdin.pause();
+          process.stdout.write("\n");
+          resolve(value);
+          return;
+        }
+        if (ch === "\u0003") process.exit(130);
+        if (ch === "\u007f" || ch === "\b") value = value.slice(0, -1);
+        else value += ch;
+      }
+    };
+    stdin.on("data", onData);
+  });
+}
+
+function normalizeKey(value) {
+  const trimmed = (value ?? "").trim();
+  return /^[0-9a-fA-F]{64}$/.test(trimmed) ? `0x${trimmed}` : trimmed;
+}
+
+function resolvePrivateKey() {
+  let key = normalizeKey(process.env.SEPOLIA_PRIVATE_KEY);
+  if (key === "") key = undefined;
+  const fileOrKey = (process.env.SEPOLIA_PRIVATE_KEY_FILE ?? "").trim();
+  if (key === undefined && fileOrKey !== "") {
+    if (/^(0x)?[0-9a-fA-F]{64}$/.test(fileOrKey)) {
+      key = normalizeKey(fileOrKey);
+      console.warn(
+        "warning: SEPOLIA_PRIVATE_KEY_FILE looks like a private key, not a path; " +
+          "using it as the key. Rename it to SEPOLIA_PRIVATE_KEY.",
+      );
+    } else {
+      try {
+        key = normalizeKey(readFileSync(fileOrKey, "utf8"));
+      } catch {
+        throw new Error(`SEPOLIA_PRIVATE_KEY_FILE is not a readable file: ${fileOrKey}`);
+      }
+    }
+  }
+  return key;
+}
+
+const VALID_KEY = /^0x[0-9a-fA-F]{64}$/;
+
+let privateKey;
+if (!dryRun) {
+  privateKey = resolvePrivateKey();
+  if (!VALID_KEY.test(privateKey ?? "") && process.stdin.isTTY) {
+    privateKey = normalizeKey(
+      await promptHidden("Sepolia owner private key (hidden): "),
+    );
+  }
+  if (!VALID_KEY.test(privateKey ?? "")) {
+    throw new Error(
+      "SEPOLIA_PRIVATE_KEY is required (owner/resolver-admin key). Set it in the " +
+        "environment, in app/.env, or via SEPOLIA_PRIVATE_KEY_FILE, or run on a TTY " +
+        "to be prompted.",
+    );
+  }
 }
 
 const account = dryRun
