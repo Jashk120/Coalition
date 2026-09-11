@@ -3,6 +3,7 @@ import {
   initiateDeveloperControlledWalletsClient,
   type CircleDeveloperControlledWalletsClient,
 } from "@circle-fin/developer-controlled-wallets";
+import { USDC_ADDRESS } from "./constants";
 
 /**
  * Headless on-chain funding via Circle Developer-Controlled Wallets.
@@ -14,7 +15,7 @@ import {
  */
 
 /** USDC token contract on Arc testnet (approve target). */
-export const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+export { USDC_ADDRESS };
 
 /** One-line setup hint returned alongside missing-env errors. */
 export const CIRCLE_SETUP_HINT =

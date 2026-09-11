@@ -10,6 +10,9 @@ export const POOL_ADDRESS =
   (process.env["NEXT_PUBLIC_POOL_ADDRESS"] as Address | undefined) ??
   "0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd";
 
+/** USDC ERC-20 on Arc testnet (6-decimal view) — the pool's approve/commit token. */
+export const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+
 export const CHAIN_ID = Number(
   process.env["NEXT_PUBLIC_CHAIN_ID"] ?? "5042002",
 );
@@ -113,7 +116,7 @@ export const OUTSIDE_BUYER = {
 export const RESALE_NETWORK = "eip155:5042002";
 
 /** USDC token on Arc testnet (x402 asset + Gateway deposit token). */
-export const RESALE_USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+export const RESALE_USDC_ADDRESS = USDC_ADDRESS;
 
 /** Circle Gateway facilitator for x402 verify/settle (testnet). */
 export const RESALE_FACILITATOR_URL = "https://gateway-api-testnet.circle.com";
