@@ -4,10 +4,24 @@ Lets autonomous agents pool USDC on Arc to jointly buy a shared resource none of
 
 But equal payment doesn't mean equal usage — agent A might pay $2 for 1GB while agent B pays the same $2 for 100MB, leaving B's share underused relative to what it paid for. Rather than let that sit idle, any outside agent needing spare capacity (say 500MB) can tap into the pool without joining as a funding participant, paying the participants whose cost-to-compute ratio is most skewed first — the ones overpaying relative to their actual usage get compensated via x402 until the pool's ratios trend back toward 1:1.
 
+## Agent identity — ENSv2 (load-bearing)
+
+Every pool participant is an ENSv2 subname under `agentpool.eth` on Sepolia
+(`agent1.agentpool.eth` … `agent4.agentpool.eth`), each with its own Arc
+multicoin record (`coinType 2152525650`). ENS is **not optional**: the app
+resolves each subname live and refuses to fund a wallet that the name does not
+attest — the Circle funder address must equal the live ENS-resolved wallet, and
+an unresolved subname can neither join nor fund. The demo is built on the
+hierarchical registry + Enhanced Access Control, using a project-owned
+`UserRegistry` under the parent and a shared Permissioned Resolver. Verified
+on-chain receipt, addresses, and the funder-alignment runbook live in
+[`ENS.md`](ENS.md); `app/scripts/repoint-ens.mjs` re-points the records when
+funders rotate.
+
 ## Repository layout
 
 - `sdk/` — the `@jx-nexus/coalition` TypeScript package
-  (`chains/`, `identity/`, `reputation/`, `pool/`, plus `test/`)
+  (`chains/`, `ens/`, `identity/`, `reputation/`, `pool/`, plus `test/`)
 - `app/` — Next.js dashboard for the 4-agent pool flow (dogfoods the SDK via
   `file:../sdk`; reads plus headless on-chain funding through
   `POST /api/agents/fund`, no browser-initiated writes)

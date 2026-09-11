@@ -91,6 +91,19 @@ on-chain enumeration, spec'd for `contracts/`), reads stay free, and the
 subgraph's `Commitment` entities serve discovery queries. No Enumerable-style
 add-on anywhere: reads are free, writes pay once.
 
+As-built verified state (2026-09-11 via `cast` against
+`https://ethereum-sepolia-rpc.publicnode.com`; full receipt in `ENS.md`
+§§2–3): `agentpool.eth` is registered in the official ETHRegistry
+`0xbdc85d…0E2` (status 2); subname operations ran against the project's own
+registry `0x365d…e1dc34` (EIP-1967 proxy with official UserRegistry
+implementation `0x624a25…2050` in its slot); all 4 subnames plus the parent
+use the shared PermissionedResolver `0x2f60…9973` (proxy with official
+implementation `0x9eae5c…365e` in its slot); all 4 subnames are status 2
+REGISTERED with expiry 1820412108. ENS is now mandatory for funding:
+`POST /api/agents/fund` requires `funderWallet == ENS wallet` per live
+attestation, and an unattested step fails with no approve, commit, or
+allocate. There is no seed-wallet fallback.
+
 ## 5. `sdk/ens/` shape (when built)
 
 Thin wrapper over viem + direct calls (reads stable, writes beta): wrap

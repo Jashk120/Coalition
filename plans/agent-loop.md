@@ -27,12 +27,12 @@ per `sdk/src/chains/arc.ts` — either reaches testnet).
 4 of the 5 funded wallets. The 5th is held back as the outside resale buyer
 and never commits.
 
-| # | subname (`ensName`) | wallet (cross-check + fallback) | cpu | mem | share |
+| # | subname (`ensName`) | wallet (ENS cross-check only, no fallback) | cpu | mem | share |
 |---|---|---|---|---|---|
-| agent-1 | `agent1.agentpool.eth` | `0x0427194a9c99599a8bbbcc292b1523be91e4101d` | 0.2 | 800 MB | $2.50 = `2500000` atomic |
-| agent-2 | `agent2.agentpool.eth` | `0xd1a3c06eb92dfd48fa1bf10ba2071da25e39cd47` | 0.15 | 600 MB | $2.50 = `2500000` atomic |
-| agent-3 | `agent3.agentpool.eth` | `0x072825b4ba2c8019ccceba10e59b29a40980be94` | 0.1 | 400 MB | $2.50 = `2500000` atomic |
-| agent-4 | `agent4.agentpool.eth` | `0x67bc424b83be66f7f5c4fc2324d4154744f1b310` | 0.25 | 1000 MB | $2.50 = `2500000` atomic |
+| agent-1 | `agent1.agentpool.eth` | `0x4f188f3da697984f0fc02e61fda4a34b00abf39a` | 0.2 | 800 MB | $2.50 = `2500000` atomic |
+| agent-2 | `agent2.agentpool.eth` | `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b` | 0.15 | 600 MB | $2.50 = `2500000` atomic |
+| agent-3 | `agent3.agentpool.eth` | `0xde086aa43915670c74444b3e5a464d992e1f7770` | 0.1 | 400 MB | $2.50 = `2500000` atomic |
+| agent-4 | `agent4.agentpool.eth` | `0x0a6415e892972214bceb0271746cb45932f7eaf1` | 0.25 | 1000 MB | $2.50 = `2500000` atomic |
 
 Held out: `0x2e07588b8180c8235c2a1be7ffa2639545630dd1` (resale buyer,
 optional `agent5.agentpool.eth` — never commits, stays outside the loop).
@@ -40,9 +40,9 @@ optional `agent5.agentpool.eth` — never commits, stays outside the loop).
 Parent `agentpool.eth`, Arc coin type `2152525650` (`ARC_COIN_TYPE`,
 `0x80000000 | 5042002`) — see the `ens` block in `demo/agents.seeds.json`
 and `sdk/src/demo/seeds.ts` (`DEMO_SEED_AGENTS`, same order, same values).
-`ensName` is the live identity; `wallet` is retained as the cross-check
-(resolved Arc wallet must equal it) and as the fallback so the demo runs
-before Sepolia records land. Sequential order agent-1 → agent-4 is unchanged.
+`ensName` is the live identity; `wallet` is the ENS cross-check
+(resolved Arc wallet must equal it). There is no fallback: an unresolved
+seed carries no wallet and cannot run. Sequential order agent-1 to agent-4 is unchanged.
 
 Totals: cpu `0.70 / 1.0`, mem `2800 / 4096 MB` (fits orchestrator defaults
 `CPU_UNITS=1`, `MEM_MB=4096`, `MAX_AGENTS=5`); funding `10.00 / 10.00` —
@@ -144,7 +144,7 @@ Also fetch `GET /terms.json` (the on-chain `resourceURI` target) so the LLM
 quotes live terms, and optionally `getPoolMetadata` for `maxParticipants` /
 `resourceURI` / `feedbackCursor`.
 
-### (b) Identity + reputation check — ENS-first, wallet cross-check, graceful fallback
+### (b) Identity + reputation check, ENS-first, wallet cross-check, no fallback
 
 Each seed resolves live before anything else. The runner calls
 `resolveSeedAgents({ sepoliaClient, arcClient, seeds: DEMO_SEED_AGENTS,
@@ -155,9 +155,10 @@ preset; Arc reads are free log/call reads). Per seed, in seed order:
    subname → Arc wallet (`ARC_COIN_TYPE`) → agent ids (`findAgentsByOwner`
    on `Registered` logs, zero gas).
 2. The resolved Arc wallet **must equal** the seed `wallet`
-   (case-insensitive compare). Mismatch = `skipped` with reason
+   (case-insensitive compare). Mismatch = `unresolved` with reason
    `"arc wallet mismatch for \"<ensName>\": ENS resolves to <actual>,
-   seed expects <expected>"` — the agent never runs on a stranger's identity.
+   seed expects <expected>"`, and the agent cannot run. No wallet is
+   carried on failure (`fallbackWallet` removed).
 3. Per agent id: `resolveAgent` (URI + bound wallet) plus
    `getReputationSummary` over the reviewers, then the dropout scan —
    `readFeedback` per reviewer per index, failing on any unrevoked entry
@@ -172,7 +173,7 @@ const resolutions = await resolveSeedAgents({
   reviewers: [provider, ...committedPeers], // MUST be non-empty (Sybil rule)
 });
 for (const r of resolutions) {
-  if (r.status === "skipped") continue; // reason logged, seed wallet as fallback
+  if (r.status === "unresolved") continue; // reason logged, no wallet, agent cannot run
   for (const a of r.agents) {
     if (a.dropout) continue; // skip: dropout tag from ${a.dropoutClient}
     // a.agent (resolveAgent) + a.summary (getReputationSummary) feed the gate
@@ -180,15 +181,14 @@ for (const r of resolutions) {
 }
 ```
 
-Null handling (never crash, never abort the loop — one missing record does
-not stop the other three):
+Null handling (never crash, never abort the loop, one missing record does
+not stop the other three; unresolved means the agent cannot run):
 
-- No Arc record (`resolveEnsToAgents` returns `null`) → `skipped` with
-  reason `"no Arc record for \"<ensName>\"; falling back to seed wallet
-  <wallet>"`; `fallbackWallet` carries the seed wallet so the runner can
-  proceed on the deterministic fallback and log the reason.
-- Wallet mismatch → `skipped` with the mismatch reason above (identity
-  stays strict even in fallback mode).
+- No Arc record (`resolveEnsToAgents` returns `null`) → `unresolved` with
+  reason `"no Arc record for \"<ensName>\""`; no wallet is carried and the
+  runner cannot proceed for that seed.
+- Wallet mismatch → `unresolved` with the mismatch reason above (identity
+  stays strict; no fallback mode exists).
 - Zero agent ids for a matching wallet → `resolved` with `agents: []`
   (no history = pass with reason `"no history"`, same as the legacy rule).
 
@@ -213,9 +213,17 @@ const fits = !wouldExceedTarget(state, 2500000n); // 2500000n = $2.50
 
 Skip reasons are fixed strings, e.g. `"skip: would exceed 10.00 target"`,
 `"skip: pool settled/expired"`, `"skip: maxParticipants reached"`,
-`"skip: dropout tag from <client>"`. A skip never touches the wallet.
+`"skip: dropout tag from <client>"`, `"skip: ENS unresolved — …"`,
+`"skip: ENS resolution unavailable …"`. An unresolved seed cannot join.
+A skip never touches the wallet.
 
-### (d) Commit — approve first, then commit (join path only)
+### (d) Commit, approve first then commit (join path only)
+
+Funding requires ENS attestation: `POST /api/agents/fund` resolves each
+`SEED_META[i].ensName` live and requires `funderWallet == ENS wallet`
+(case-insensitive). An unattested step is `failed` and no approve, commit,
+or allocate happens for it. `POST /api/agents/run` resolves every seed
+live first under the same rule.
 
 Circle wallet skill preconditions (per `plans/circle-agent-kit.md` §§3–4):
 agent follows the `wallet-pay` skill triage before paying (Arc = vanilla path,
@@ -230,14 +238,14 @@ Exact CLI syntax — `--address` is the agent's own seed wallet,
 circle wallet execute "approve(address,uint256)" \
   0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd 2500000 \
   --contract 0x3600000000000000000000000000000000000000 \
-  --address 0x0427194a9c99599a8bbbcc292b1523be91e4101d \
+  --address 0x4f188f3da697984f0fc02e61fda4a34b00abf39a \
   --chain ARC-TESTNET
 
 # 2. commit $2.50 — reverts OverTarget past 10.00 / TooManyParticipants past cap
 circle wallet execute "commit(uint256)" \
   2500000 \
   --contract 0xC6f9A1559f9a02755aC7Ba4865C558B0ed46B4fd \
-  --address 0x0427194a9c99599a8bbbcc292b1523be91e4101d \
+  --address 0x4f188f3da697984f0fc02e61fda4a34b00abf39a \
   --chain ARC-TESTNET
 ```
 
@@ -316,7 +324,7 @@ After the 4-agent loop, the held-out buyer `0x2e07…` prices spare capacity
 without joining — the §6 Nanopayments beat:
 
 ```sh
-curl -s 'http://localhost:8080/quote?seller=0x0427194a9c99599a8bbbcc292b1523be91e4101d'
+curl -s 'http://localhost:8080/quote?seller=0x4f188f3da697984f0fc02e61fda4a34b00abf39a'
 circle services search "compute"   # discover-services skill
 circle services pay https://seller.example/compute --address 0x2e07588b8180c8235c2a1be7ffa2639545630dd1 --chain ARC-TESTNET --max-amount 0.01
 ```
