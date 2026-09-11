@@ -369,6 +369,66 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const loadQuotes = useCallback(async () => {
+    const rows = await Promise.all(
+      SEED_META.map(async (seed): Promise<AgentQuoteState> => {
+        const base = { wallet: seed.wallet, ensName: seed.ensName };
+        try {
+          const quoteRes = await fetch(
+            `/api/quote?seller=${seed.wallet}`,
+            { cache: "no-store" },
+          );
+          const quoteBody = (await parseJson(quoteRes)) as QuotePayload;
+          if (quoteBody.ok) {
+            if (quoteBody.empty === true) {
+              return { ...base, quote: { status: "empty", reason: quoteBody.reason } };
+            }
+            const q = quoteBody.quote;
+            return {
+              ...base,
+              quote: {
+                status: "ready",
+                summary:
+                  `rate ${q.ratePerMBAtomic} atomic/MB + ${q.ratePerCUAtomic} atomic/CU; ` +
+                  `available ${q.availableMB} MB / ${q.availableCU} CU`,
+              },
+            };
+          }
+          return { ...base, quote: { status: "error", message: quoteBody.error } };
+        } catch (error) {
+          return {
+            ...base,
+            quote: {
+              status: "error",
+              message: error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
+      }),
+    );
+    setQuotes(rows);
+  }, []);
+
+  const loadTerms = useCallback(async () => {
+    try {
+      const termsRes = await fetch("/api/terms", { cache: "no-store" });
+      const termsBody = (await parseJson(termsRes)) as TermsPayload;
+      if (termsBody.ok) {
+        setTerms({
+          status: "ready",
+          body: JSON.stringify(termsBody.terms, null, 2),
+        });
+      } else {
+        setTerms({ status: "error", message: termsBody.error });
+      }
+    } catch (error) {
+      setTerms({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
+
   const previewPlan = useCallback(async () => {
     setPlan({ status: "loading" });
     setBuy({ status: "idle" });
@@ -454,6 +514,9 @@ export default function DashboardPage() {
         setFundSteps(body.steps);
         await loadAgents();
         await loadActivity();
+        await loadUsage();
+        await loadMarket();
+        await loadQuotes();
       } else {
         setFundError(body.error);
       }
@@ -462,35 +525,12 @@ export default function DashboardPage() {
     } finally {
       setFunding(false);
     }
-  }, [loadAgents, loadActivity]);
+  }, [loadAgents, loadActivity, loadUsage, loadMarket, loadQuotes]);
 
   useEffect(() => {
     void loadAgents();
     void loadUsage();
   }, [loadAgents, loadUsage]);
-
-  // Polling keeps the dashboard live without manual reloads: pool/round
-  // state every 10s, on-chain activity every 15s (staggered so the
-  // throttle-sensitive RPC readers never fire in the same tick).
-  // Orchestrator usage polls every 1s: it is a cheap in-memory read (no
-  // RPC), and the per-second tick is what makes live in-flight bars visibly
-  // climb while burns run.
-  useEffect(() => {
-    const agentsTimer = setInterval(() => {
-      void loadAgents();
-    }, 10_000);
-    const usageTimer = setInterval(() => {
-      void loadUsage();
-    }, 1_000);
-    const activityTimer = setInterval(() => {
-      void loadActivity();
-    }, 15_000);
-    return () => {
-      clearInterval(agentsTimer);
-      clearInterval(usageTimer);
-      clearInterval(activityTimer);
-    };
-  }, [loadAgents, loadUsage, loadActivity]);
 
   const loadNamespaces = useCallback(async () => {
     try {
@@ -509,82 +549,70 @@ export default function DashboardPage() {
     }
   }, []);
 
+  // Polling keeps the dashboard live without manual reloads: pool/round
+  // state plus resale market every 10s, on-chain activity plus resale
+  // quotes every 15s, wallet names every 30s, ENS namespaces and terms
+  // every 60s (identity changes rarely; cached server-side too).
+  // Orchestrator usage polls every 1s: it is a cheap in-memory read (no
+  // RPC), and the per-second tick is what makes live in-flight bars visibly
+  // climb while burns run.
+  useEffect(() => {
+    const agentsTimer = setInterval(() => {
+      void loadAgents();
+    }, 10_000);
+    const usageTimer = setInterval(() => {
+      void loadUsage();
+    }, 1_000);
+    const activityTimer = setInterval(() => {
+      void loadActivity();
+    }, 15_000);
+    const marketTimer = setInterval(() => {
+      void loadMarket();
+    }, 10_000);
+    const quotesTimer = setInterval(() => {
+      void loadQuotes();
+    }, 15_000);
+    const walletsTimer = setInterval(() => {
+      void loadWallets();
+    }, 30_000);
+    const namespacesTimer = setInterval(() => {
+      void loadNamespaces();
+    }, 60_000);
+    const termsTimer = setInterval(() => {
+      void loadTerms();
+    }, 60_000);
+    return () => {
+      clearInterval(agentsTimer);
+      clearInterval(usageTimer);
+      clearInterval(activityTimer);
+      clearInterval(marketTimer);
+      clearInterval(quotesTimer);
+      clearInterval(walletsTimer);
+      clearInterval(namespacesTimer);
+      clearInterval(termsTimer);
+    };
+  }, [
+    loadAgents,
+    loadUsage,
+    loadActivity,
+    loadMarket,
+    loadQuotes,
+    loadWallets,
+    loadNamespaces,
+    loadTerms,
+  ]);
+
   useEffect(() => {
     void loadNamespaces();
   }, [loadNamespaces]);
 
   useEffect(() => {
-    let cancelled = false;
-    async function loadQuotes(): Promise<void> {
-      const rows = await Promise.all(
-        SEED_META.map(async (seed): Promise<AgentQuoteState> => {
-          const base = { wallet: seed.wallet, ensName: seed.ensName };
-          try {
-            const quoteRes = await fetch(
-              `/api/quote?seller=${seed.wallet}`,
-              { cache: "no-store" },
-            );
-            const quoteBody = (await parseJson(quoteRes)) as QuotePayload;
-            if (quoteBody.ok) {
-              if (quoteBody.empty === true) {
-                return { ...base, quote: { status: "empty", reason: quoteBody.reason } };
-              }
-              const q = quoteBody.quote;
-              return {
-                ...base,
-                quote: {
-                  status: "ready",
-                  summary:
-                    `rate ${q.ratePerMBAtomic} atomic/MB + ${q.ratePerCUAtomic} atomic/CU; ` +
-                    `available ${q.availableMB} MB / ${q.availableCU} CU`,
-                },
-              };
-            }
-            return { ...base, quote: { status: "error", message: quoteBody.error } };
-          } catch (error) {
-            return {
-              ...base,
-              quote: {
-                status: "error",
-                message: error instanceof Error ? error.message : String(error),
-              },
-            };
-          }
-        }),
-      );
-      if (!cancelled) setQuotes(rows);
-    }
-    async function loadTerms(): Promise<void> {
-      try {
-        const termsRes = await fetch("/api/terms", { cache: "no-store" });
-        const termsBody = (await parseJson(termsRes)) as TermsPayload;
-        if (cancelled) return;
-        if (termsBody.ok) {
-          setTerms({
-            status: "ready",
-            body: JSON.stringify(termsBody.terms, null, 2),
-          });
-        } else {
-          setTerms({ status: "error", message: termsBody.error });
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setTerms({
-            status: "error",
-            message: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-    }
     void loadQuotes();
     void loadActivity();
     void loadTerms();
     void loadMarket();
     void loadWallets();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadActivity, loadMarket, loadWallets]);
+  }, [loadActivity, loadMarket, loadQuotes, loadTerms, loadWallets]);
 
   const freePool = useCallback(async () => {
     if (
@@ -622,12 +650,14 @@ export default function DashboardPage() {
       await loadAgents();
       await loadActivity();
       await loadUsage();
+      await loadMarket();
+      await loadQuotes();
     } catch (error) {
       setFreeError(error instanceof Error ? error.message : String(error));
     } finally {
       setFreeing(false);
     }
-  }, [loadAgents, loadActivity, loadUsage]);
+  }, [loadAgents, loadActivity, loadUsage, loadMarket, loadQuotes]);
 
   // Resale shows whenever someone actually holds spare: an empty market
   // (no allocations, or fully-used slices) has nothing to sell, so the
@@ -653,8 +683,8 @@ export default function DashboardPage() {
         <p>
           4-agent funding demo on Arc 5042002. Fund on-chain writes real
           approve+commit transactions via Circle wallets. Live — compute
-          usage streams every second, pool state every 10s, on-chain
-          activity every 15s.
+          usage streams every second, pool + resale market every 10s,
+          on-chain activity + resale quotes every 15s.
         </p>
       </header>
 
