@@ -40,10 +40,12 @@ faucet.circle.com: the buy settles as one atomic Multicall3 aggregate, so no
 Gateway deposit is needed.
 
 The App Kit treasury rail is server-only too: `CIRCLE_TREASURY_WALLET_ID` is a
-Circle DCW on Arc Testnet, funded with USDC, that `POST /api/agents/treasury`
-spends to fund wallets via `kit.send` (`CIRCLE_TREASURY_FUND_USDC` sets the
-default per-recipient amount). Both it and `CIRCLE_DEPLOYER_WALLET_ID` (used
-only by `deploy-pool-circle.mjs`) default to `CIRCLE_PROVIDER_WALLET_ID`.
+dedicated operator DCW on Arc Testnet, funded with USDC, that
+`POST /api/agents/treasury` spends to re-fund agents via `kit.send`
+(`CIRCLE_TREASURY_FUND_USDC` sets the default per-recipient amount). It must
+not be the pool provider — the provider is the settle payee and must not fund
+the agents that pay into the pool. `CIRCLE_DEPLOYER_WALLET_ID` (used only by
+`deploy-pool-circle.mjs`) defaults to `CIRCLE_PROVIDER_WALLET_ID`.
 
 ## Routes
 

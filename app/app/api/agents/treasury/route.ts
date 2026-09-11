@@ -53,6 +53,18 @@ export async function POST(
   if (!circleEnv.ok) {
     return NextResponse.json({ ok: false, error: circleEnv.error }, { status: 503 });
   }
+  const providerWalletId = process.env["CIRCLE_PROVIDER_WALLET_ID"] ?? "";
+  if (providerWalletId !== "" && env.treasuryWalletId === providerWalletId) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "treasury must not be the pool provider wallet: the provider is the " +
+          "settle payee and must not fund the agents that pay into the pool",
+      },
+      { status: 409 },
+    );
+  }
 
   let body: unknown = {};
   try {

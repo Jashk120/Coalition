@@ -11,9 +11,10 @@ import type { TreasurySendStep } from "./types";
 const ARC_CHAIN = "Arc_Testnet" as const;
 
 export const TREASURY_SETUP_HINT =
-  "Create a Circle developer-controlled Arc Testnet wallet for the treasury, " +
-  "fund it with testnet USDC at https://faucet.circle.com, then set " +
-  "CIRCLE_TREASURY_WALLET_ID (defaults to CIRCLE_PROVIDER_WALLET_ID when unset).";
+  "Set CIRCLE_TREASURY_WALLET_ID to a dedicated operator wallet on Arc " +
+  "Testnet, funded with USDC at https://faucet.circle.com. Do not use the pool " +
+  "provider: the provider is the settle payee and must not fund the agents " +
+  "that pay into the pool.";
 
 export type TreasuryEnv =
   | {
@@ -30,13 +31,8 @@ export function readTreasuryEnv(): TreasuryEnv {
   if (apiKey === "") missing.push("CIRCLE_API_KEY");
   const entitySecret = process.env["CIRCLE_ENTITY_SECRET"] ?? "";
   if (entitySecret === "") missing.push("CIRCLE_ENTITY_SECRET");
-  const treasuryWalletId =
-    process.env["CIRCLE_TREASURY_WALLET_ID"] ??
-    process.env["CIRCLE_PROVIDER_WALLET_ID"] ??
-    "";
-  if (treasuryWalletId === "") {
-    missing.push("CIRCLE_TREASURY_WALLET_ID (or CIRCLE_PROVIDER_WALLET_ID)");
-  }
+  const treasuryWalletId = process.env["CIRCLE_TREASURY_WALLET_ID"] ?? "";
+  if (treasuryWalletId === "") missing.push("CIRCLE_TREASURY_WALLET_ID");
   if (missing.length > 0) {
     return {
       ok: false,
