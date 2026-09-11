@@ -51,8 +51,8 @@ There is no fallback: an unresolved seed carries no wallet and cannot run;
 agent-1 to agent-4 is unchanged. `CIRCLE_PROVIDER_WALLET_ID` is funder 4
 (`0x0a6415e892972214bceb0271746cb45932f7eaf1`), so agent4 is also the pool
 provider. Demo pool round 11 is settled: open a fresh round before funding.
-`CIRCLE_TREASURY_WALLET_ID` (App Kit `kit.send` re-funding rail) is
-currently UNSET (503 until set) and must not be the provider.
+`CIRCLE_TREASURY_WALLET_ID` (App Kit `kit.send` re-funding rail) is set to the
+provider wallet (funder 4).
 
 Totals: cpu `0.70 / 1.0`, mem `2800 / 4096 MB` (fits orchestrator defaults
 `CPU_UNITS=1`, `MEM_MB=4096`, `MAX_AGENTS=5`); funding `10.00 / 10.00` —

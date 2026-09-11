@@ -64,10 +64,9 @@ Gateway deposit is needed.
 The App Kit treasury rail is server-only too: `POST /api/agents/treasury`
 uses Circle App Kit `kit.send` from `CIRCLE_TREASURY_WALLET_ID` to the agent
 wallets (`CIRCLE_TREASURY_FUND_USDC` sets the default per-recipient amount).
-`CIRCLE_TREASURY_WALLET_ID` is currently UNSET: the rail returns 503 until
-it is set. When set it must be a dedicated operator DCW on Arc Testnet,
-funded with USDC, and it must not be the provider. `CIRCLE_DEPLOYER_WALLET_ID`
-(used only by `deploy-pool-circle.mjs`) defaults to
+`CIRCLE_TREASURY_WALLET_ID` is set to the provider wallet (funder 4,
+`0x0a64…`); it only needs to be a funded Circle DCW on Arc Testnet.
+`CIRCLE_DEPLOYER_WALLET_ID` (used only by `deploy-pool-circle.mjs`) defaults to
 `CIRCLE_PROVIDER_WALLET_ID`.
 
 ## Routes
@@ -152,10 +151,10 @@ balances. This rail sends from `CIRCLE_TREASURY_WALLET_ID` to the agents via
 recipient's on-chain USDC balance and tops it up to
 `CIRCLE_TREASURY_FUND_USDC` (default 2.50, plus a small Arc gas buffer) only
 when it is below that target — already-funded wallets are skipped, so it is
-idempotent. `CIRCLE_TREASURY_WALLET_ID` is currently UNSET (503 until set)
-and must not be the provider. It fans out over `CIRCLE_WALLET_IDS` (never
-the treasury itself) or targets one wallet via `to`. App Kit cannot call
-contracts, so `/api/agents/fund` keeps doing the DCW `approve` + `pool.commit`.
+idempotent. `CIRCLE_TREASURY_WALLET_ID` is the provider wallet (funder 4). It
+fans out over `CIRCLE_WALLET_IDS` (never the treasury itself) or targets one
+wallet via `to`. App Kit cannot call contracts, so `/api/agents/fund` keeps
+doing the DCW `approve` + `pool.commit`.
 
 ## Round reads (`lib/pool-state.ts`)
 

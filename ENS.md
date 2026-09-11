@@ -255,8 +255,8 @@ wallets (Developer-Controlled Wallets; no local keys, no `seed-keys.ts`, no
 the name does not resolve to fails closed with no transaction.
 
 Related pool facts: `CIRCLE_PROVIDER_WALLET_ID` is funder 4 (`0x0a64…`), so
-agent4 is also the pool provider. `CIRCLE_TREASURY_WALLET_ID` is unset
-(treasury rail 503 until set). Demo pool round 11 is settled.
+agent4 is also the pool provider, and `CIRCLE_TREASURY_WALLET_ID` is set to
+that same provider wallet (allowed). Demo pool round 11 is settled.
 
 ## 8. Video timestamps + live demo URL
 
@@ -297,7 +297,7 @@ video is claimed here.
   docs-table `ETHRegistry` generation. Factory address + generation that
   owns this deployment are still unverified; record them so judges can
   reproduce it.
-- `CIRCLE_TREASURY_WALLET_ID` is unset (treasury rail 503 until set).
+- The App Kit treasury rail uses the provider wallet (funder 4) as its source.
   No live EAC grant has been exercised (§4). Video and live demo URL are
   still missing (§8).
 - ENS records align with the Circle funder wallets, and `POST /api/agents/fund`
@@ -324,5 +324,6 @@ video is claimed here.
 - TODO-5 (owner: Day-10 editor): record video, fill §8 timestamps + video URL.
   No video exists yet.
 - TODO-6 (owner: Day-10 deployer): deploy demo app, fill live demo URL in §8.
-- TODO-7 (owner: operator): set `CIRCLE_TREASURY_WALLET_ID`; treasury rail
-  is 503 until set.
+- TODO-7 (owner: operator): DONE. `CIRCLE_TREASURY_WALLET_ID` is set to the
+  provider wallet (funder 4, `0x0a64…`); the treasury rail re-funds agents
+  from it.

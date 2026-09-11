@@ -136,8 +136,8 @@ and no self-custody path: `app/lib/seed-keys.ts`,
 `fund-pool.mjs` for agent funding are removed; funding signs via Circle
 (`circle wallet execute` / DCW). `POST /api/agents/run` is a dry-run that
 resolves every seed live. The App Kit treasury rail (`POST
-/api/agents/treasury`, `kit.send` from `CIRCLE_TREASURY_WALLET_ID`) is
-currently UNSET (503 until set) and must not be the provider.
+/api/agents/treasury`, `kit.send`) uses the provider wallet (funder 4) as
+`CIRCLE_TREASURY_WALLET_ID`.
 
 ## 5. `sdk/ens/` shape (when built)
 
