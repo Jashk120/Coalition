@@ -7,7 +7,7 @@ subgraph when the endpoint is set. Live verified 2026-09-11 against the
 Studio dev endpoint: `_meta.hasIndexingErrors = false`, one `Pool` entity,
 47 commitments, 0 dropouts. The subgraph is deployed to Subgraph Studio only;
 it has NOT been published to the decentralized network. No Substreams, MCP,
-A2A, or Graph-targeted x402 usage exists (§8). Video is still TODO (§11 TODO-a).
+A2A, or Graph-targeted x402 usage exists (§8). No demo video exists yet.
 
 Coalition enters the Start Fresh (Net-new) build pool: git history begins
 2026-09-04 and runs to 2026-09-11.
@@ -20,13 +20,13 @@ Track: "Best AI Tooling or AI Use Case with The Graph (From Scratch)", $5,000.
 |---|---|---|---|
 | 1 | Built from scratch on The Graph (Start Fresh) | PASS | Git history 2026-09-04 to 2026-09-11; `subgraph/` scaffolded in-repo (`subgraph.yaml`, `schema.graphql`, `src/mapping.ts`); deployed as new Studio slug `coalition-resource-pool`, numeric ID `1760135` (§2) |
 | 2 | Subgraph indexes project contracts live | PASS (live) | Data source `ResourcePool` on `arc-testnet`, address `0x8b9f38c7B005Dd67203e27240F45335a9e64F692`, `startBlock: 61221987`; six event handlers (§4); live query 2026-09-11 returned the pool + 47 commitments (§3) |
-| 3 | App consumes the subgraph (AI tooling or AI use case) | PASS on app reads and agent reasoning | `readPoolState` is subgraph-first, `readRoster` is subgraph-or-bust, `discoverPools` scans the subgraph (§6); the autonomous agent-5 path (`POST /api/agents/resale-run`) decides from `getPoolHealth`, fail-closed (§10, TODO-c resolved). Only the dashboard demo loop (`POST /api/agents/run`) still decides from on-chain reads |
+| 3 | App consumes the subgraph (AI tooling or AI use case) | PASS on app reads and agent reasoning | `readPoolState` is subgraph-first, `readRoster` is subgraph-or-bust, `discoverPools` scans the subgraph (§6); the autonomous agent-5 path (`POST /api/agents/resale-run`) decides from `getPoolHealth`, fail-closed (§10). Only the dashboard demo loop (`POST /api/agents/run`) still decides from on-chain reads |
 | 4 | Central, not cosmetic | PASS | `readRoster()` throws `"subgraph roster unavailable: SUBGRAPH_ENDPOINT is not configured"` when unset; no silent fallback exists on that path (`app/lib/pool-state.ts`) |
 | 5 | Reproducible deployment receipt | PASS | Manifest, mapping, dependency, endpoint, IPFS hash, and exact deploy command in §2; Studio page + query endpoint listed |
-| 6 | Video demo | FAIL (TODO) | No video exists; TODO-a (§11); the roster path (no fallback) is the recommended proof beat |
+| 6 | Video demo | FAIL | No video exists; the roster path (no fallback) is the recommended proof beat |
 
 Do not claim a decentralized-network publication, a video, or agent-over-subgraph
-reasoning until §8, §10, and §11 say otherwise.
+reasoning until §8 and §10 say otherwise.
 
 ## 2. Deployment facts
 
@@ -256,7 +256,7 @@ Regression tests added (`sdk/test/graph.test.ts`):
   `dropoutCount`) through the pure `decideResaleBuy` in
   `app/lib/resale-decision.ts`, and the subgraph read is fail-closed —
   without it the agent skips, so The Graph feeds the AI loop, not just
-  the UI (TODO-c resolved).
+  the UI.
 - Pool target (`10000000`) is seeded once in the mapping, not read from the
   contract; a target change on-chain without a mapping update would desync
   the indexed `Pool.target`.
@@ -266,23 +266,3 @@ Regression tests added (`sdk/test/graph.test.ts`):
 - Live numbers in §3 are a point-in-time snapshot (2026-09-11,
   `_meta.block.number = 61567239`). Re-query at demo time; counts move as
   the pool does.
-
-## 11. TODO fill-in list (owner + command)
-
-- TODO-a (owner: Day-10 editor): record the 2-4 minute demo video showing a
-  live subgraph query. The roster path is the best proof because it has no
-  fallback (`readRoster` in `app/lib/pool-state.ts`). No video exists yet.
-  Record: screen-capture the query in §3 plus the roster UI with
-  `SUBGRAPH_ENDPOINT` set, then unset it to show the explicit error.
-- TODO-b (owner: Day-10 deployer): publish the subgraph to the decentralized
-  network for the API-key gateway URL
-  (`https://gateway.thegraph.com/api/<API_KEY>/subgraphs/id/<SUBGRAPH_ID>`).
-  Record: `graph publish coalition-resource-pool` (or the Studio publish
-  flow) + the returned Subgraph ID + a 200 against the gateway URL.
-- TODO-c (owner: agent-loop owner): RESOLVED — `POST /api/agents/resale-run`
-  reasons over subgraph data (`getPoolHealth` via `decideResaleBuy`, fail-closed
-  to `skip` when the subgraph is unreachable, per §6). Record: the decision
-  trace (`reason` + `trace.reasons`) with `SUBGRAPH_ENDPOINT` set vs unset.
-- TODO-d (owner: submitter): add a "The Graph" section to the root
-  `README.md` linking this file, mirroring the existing ENS section.
-  Record: `git diff README.md`.

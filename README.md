@@ -18,6 +18,24 @@ on-chain receipt, addresses, and the funder-alignment runbook live in
 [`ENS.md`](ENS.md); `app/scripts/repoint-ens.mjs` re-points the records when
 funders rotate.
 
+## Pool indexing — The Graph (load-bearing)
+
+Every pool event is indexed by a Subgraph Studio subgraph
+(`coalition-resource-pool`, Arc testnet, numeric ID `1760135`) built from the
+in-repo `subgraph/`. The Graph is **not optional**: the roster path resolves
+commitments and dropouts from the subgraph alone — with `SUBGRAPH_ENDPOINT`
+unset, `GET /api/roster` returns an error and there is no chain fallback — and
+the autonomous agent-5 resale path fails closed to `skip` when subgraph pool
+health is unavailable. `readPoolState` is subgraph-first, and pool discovery
+scans the subgraph when the endpoint is set. `SUBGRAPH_ENDPOINT` /
+`SUBGRAPH_API_KEY` are server-only (never `NEXT_PUBLIC_`). Live deployment,
+the verified query receipt, and the exact deploy command live in
+[`GRAPH.md`](GRAPH.md); the subgraph source is in [`subgraph/`](subgraph/).
+
+Honest scope: the subgraph is deployed to Subgraph Studio only (not published
+to the decentralized network), and there is no Substreams, MCP, or
+Graph-targeted x402 usage — see the feature map in `GRAPH.md`.
+
 ## Repository layout
 
 - `sdk/` — the `@jx-nexus/coalition` TypeScript package
