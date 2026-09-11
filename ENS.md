@@ -52,8 +52,11 @@ Cross-chain constants: Arc chain `5042002`, `ARC_COIN_TYPE = 2152525650`
 
 ## 3. Names: parent + 4 subnames
 
-Wallets are the demo seeds (`demo/agents.seeds.json`; deterministic, no
-on-chain writes by the file itself). `agentId` is `null` in seeds and is
+Wallets are Circle Developer-Controlled Wallets read from `CIRCLE_WALLET_IDS`
+(index `i` maps to `SEED_META[i].ensName`, i.e. funder 1..4 = agent1..4). There
+is no self-custody path: `app/lib/seed-keys.ts` is deleted,
+`~/.coalition/seed-keys.json` is deleted, and `SEED_KEYS_FILE` is no longer
+used. Nothing here signs with a local key. `agentId` is `null` in seeds and is
 filled at runtime via `registerAgent`. Live resolution is re-verified below.
 
 | Name | Arc wallet | Registry state | Expiry (unix) | Resolver | ERC-8004 agentId |
@@ -81,7 +84,7 @@ Held out (never a subname, never commits): resale buyer
 
 Method: `cast call addr(bytes32,uint256)` with coinType 2152525650 against
 resolver `0x2f60…9973` per `namehash(name)`, independent of the repo's
-earlier receipts. All four resolved to the seed wallets above. Parent
+earlier receipts. All four resolved to the Circle funder wallets above. Parent
 `getState` read against ETHRegistry `0xbdc85d…0E2` returned status 2 with
 the owner and expiry listed in §2.
 
@@ -91,11 +94,23 @@ Prior pass (2026-09-10): `getEnsResolver` + `getEnsAddress({ coinType:
 `0x2f60…9973` on every name; parent had the same resolver and `null` Arc
 record as expected.
 
-Tx evidence (already in repo, cited not re-verified here; full trail in
-`DEBUG-1.md` §§8-11):
+Tx evidence:
 
-- `setResolver` txs: agent1 `0xca2bf196362d903fd8c4d2cd544436417371bba9d4ea473278da4ae4f1bf2cda`; agent2 `0x8d01fb7b1a23c0cd0212fd54703c26240e8cd7769cf03f6419b00def8b537823`; agent3 `0xc4ee29493f6091067dfb75b2c1ebe9e8335f720e5d8cc5169570b48f9d97e090`; agent4 `0x50334fa84a3c661ae700f44046d5a31468471d8429e26a2743481987ad0a7fb5`.
-- `setAddr` (coinType 2152525650) txs: agent1 `0x42f6a8b148b3e1cd63f521be37ee5d01face87fb16cd73714865261d8f7829ff`; agent2 `0x8494eb51a7dcee06cd8efeba064fdda2b5fa62e0eeee9ba44e24c2dbba1e4a2b`; agent3 `0x86347d755279d28542314da9a8fb5793648ce9438f4fd9422a37b86715159f20`; agent4 `0x39fab94d4227679e966055fd4760343b665286209f04eb3c0872e9a5edc12be8`.
+- CURRENT re-point (2026-09-11, owner `0x78F31B03De0E6473db80f2Da8c1a1cf5DB44A42a`,
+  `setAddr(node, 2152525650, …)` to the Circle funders): agent1
+  `0x7e0674fbfe58d404f9aa5c6571ed22bfe0d5b1854739f16868f128720987cffd`;
+  agent2
+  `0x224c9605a905aba44fdbe52025c2c751cb59a971739519c944d9b63f90033f0d`;
+  agent3
+  `0x2bf02ca29fd8861cb908128d32363c2c3554c0bc97a93db325b0338c57a7c661`;
+  agent4
+  `0xb137974200dfcbd9e1406908d66c306b4ccfa6d45bdd45434d5a515d9f817203`.
+  Cited from the operator run, not re-verified via `cast receipt` here.
+- Historical (superseded interim, pre-Circle; kept dated, NOT current):
+  `setResolver` txs: agent1 `0xca2bf196362d903fd8c4d2cd544436417371bba9d4ea473278da4ae4f1bf2cda`; agent2 `0x8d01fb7b1a23c0cd0212fd54703c26240e8cd7769cf03f6419b00def8b537823`; agent3 `0xc4ee29493f6091067dfb75b2c1ebe9e8335f720e5d8cc5169570b48f9d97e090`; agent4 `0x50334fa84a3c661ae700f44046d5a31468471d8429e26a2743481987ad0a7fb5`.
+- Historical (superseded interim, pre-Circle; kept dated, NOT current):
+  `setAddr` (coinType 2152525650) txs: agent1 `0x42f6a8b148b3e1cd63f521be37ee5d01face87fb16cd73714865261d8f7829ff`; agent2 `0x8494eb51a7dcee06cd8efeba064fdda2b5fa62e0eeee9ba44e24c2dbba1e4a2b`; agent3 `0x86347d755279d28542314da9a8fb5793648ce9438f4fd9422a37b86715159f20`; agent4 `0x39fab94d4227679e966055fd4760343b665286209f04eb3c0872e9a5edc12be8`.
+  Full trail in `DEBUG-1.md` §§8-11.
 
 ## 4. EAC roles (specified and available; on-chain grant state not exercised live)
 
@@ -199,15 +214,16 @@ current path.
 - `POST /api/agents/run` (app): resolves every seed live first. An
   unresolved seed cannot join (skip reason `"skip: ENS unresolved …"` or
   `"skip: ENS resolution unavailable …"`).
-- `POST /api/agents/fund` (app): adds an ENS attestation pre-pass. For each
-  Circle funder at index `i` it resolves `SEED_META[i].ensName` to its live
-  Arc wallet and requires `funderWallet === ensWallet`
-  (case-insensitive). When attestation fails (no Arc record, ENS lookup
-  failed, Circle address unavailable, or mismatch) the step is `failed`
-  and no approve, commit, or allocate happens. Each `FundStep` now carries
-  `ensName`, `ensWallet`, `funderWallet`, `ensAttested`. The old
-  `seed.wallet` fallback in `/allocate` was removed; allocation uses the
-  attested ENS wallet.
+- `POST /api/agents/fund` (app): adds an ENS attestation pre-pass before any
+  approve or commit. For each Circle funder at index `i` it resolves
+  `SEED_META[i].ensName` to its live Arc wallet and requires `funderWallet
+  === ensWallet` (case-insensitive). When attestation fails (no Arc record,
+  ENS lookup failed, Circle address unavailable, or mismatch) the step is
+  `failed` and no approve, commit, or allocate happens. Each `FundStep` now
+  carries `wallet` (funder address), `ensName`, `ensWallet`, `funderWallet`,
+  and `ensAttested`. There is no wallet fallback in SDK or app resolution:
+  the old `seed.wallet` fallback in `/allocate` was removed and allocation
+  uses the attested ENS wallet.
 - UI: the agents table shows an `"unresolved"` pill with the reason. Each
   fund step shows an `"ENS attested"` / `"ENS unattested"` badge with a
   title of the ENS to wallet mapping.
@@ -233,9 +249,14 @@ node scripts/repoint-ens.mjs --map agent1=0x4f188f3da697984f0fc02e61fda4a34b00ab
 ```
 
 The SDK/app seed `wallet` constants and `demo/agents.seeds.json` carry these
-addresses. `POST /api/agents/fund` signs with these Circle wallets (DCW
-`approve` + `commit`) and keeps the ENS attestation, so a funder the name does
-not resolve to fails closed.
+Circle funder addresses. `POST /api/agents/fund` funds through these Circle
+wallets (Developer-Controlled Wallets; no local keys, no `seed-keys.ts`, no
+`~/.coalition/seed-keys.json`) and keeps the ENS attestation, so a funder
+the name does not resolve to fails closed with no transaction.
+
+Related pool facts: `CIRCLE_PROVIDER_WALLET_ID` is funder 4 (`0x0a64…`), so
+agent4 is also the pool provider. `CIRCLE_TREASURY_WALLET_ID` is unset
+(treasury rail 503 until set). Demo pool round 11 is settled.
 
 ## 8. Video timestamps + live demo URL
 
@@ -266,16 +287,19 @@ video is claimed here.
   now uses it as the mandatory first step (§7b), not an optional scored step.
 - `buildUserRegistrySalt` encoding is an assumption until verified against
   the live `VerifiableFactory`.
-- Sepolia receipt RPC for older `DEBUG-1.md` tx hashes was flaky in past
-  passes. The 8 hashes in §3 are cited from the repo trail, not re-verified
-  in the 2026-09-11 `cast` pass (which covered live `addr` / `getState`
-  reads). Re-check with `cast receipt <hash> --rpc-url
+- Sepolia receipt RPC for older tx hashes was flaky in past passes. The hashes
+  in §3 are cited from the repo trail and the 2026-09-11 operator run, not
+  re-verified in the 2026-09-11 `cast` pass (which covered live `addr` /
+  `getState` reads). Re-check with `cast receipt <hash> --rpc-url
   https://ethereum-sepolia-rpc.publicnode.com` before submitting.
 - As-built uses a shared resolver, not per-subname instances. Parent
   subname operations ran against registry `0x365d…e1dc34`, not the
   docs-table `ETHRegistry` generation. Factory address + generation that
   owns this deployment are still unverified; record them so judges can
   reproduce it.
+- `CIRCLE_TREASURY_WALLET_ID` is unset (treasury rail 503 until set).
+  No live EAC grant has been exercised (§4). Video and live demo URL are
+  still missing (§8).
 - ENS records align with the Circle funder wallets, and `POST /api/agents/fund`
   signs with those Circle wallets (§3, §7b); a funder the name does not resolve
   to fails closed. Per-subname resolvers are not used.
@@ -291,11 +315,14 @@ video is claimed here.
 - TODO-3 (owner: Day-8 operator): parent registration DONE live (parent
   resolves; owner/token state in §2-§3 verified 2026-09-11); still open:
   record generation/factory that owns registry `0x365d…e1dc34`.
-- TODO-4 (owner: Day-8 operator): resolution DONE live (4/4 MATCH §3). Still
-  open: `cast receipt` re-check of the older `DEBUG-1.md` hashes, live EAC
+- TODO-4 (owner: Day-8 operator): resolution DONE live (4/4 MATCH §3);
+  re-point to Circle funders DONE 2026-09-11 (§3, §7b). Still
+  open: `cast receipt` re-check of the older hashes, live EAC
   grant-state read (grant has not been exercised), runtime `agentId`
-  registration + `resolveEnsToAgents` cross-check, per-subname vs shared
-  resolver decision, and re-pointing the records to the Circle funders (§7b).
+  registration + `resolveEnsToAgents` cross-check, and the per-subname vs
+  shared resolver decision.
 - TODO-5 (owner: Day-10 editor): record video, fill §8 timestamps + video URL.
   No video exists yet.
 - TODO-6 (owner: Day-10 deployer): deploy demo app, fill live demo URL in §8.
+- TODO-7 (owner: operator): set `CIRCLE_TREASURY_WALLET_ID`; treasury rail
+  is 503 until set.

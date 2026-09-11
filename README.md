@@ -8,7 +8,10 @@ But equal payment doesn't mean equal usage — agent A might pay $2 for 1GB whil
 
 Every pool participant is an ENSv2 subname under `agentpool.eth` on Sepolia
 (`agent1.agentpool.eth` … `agent4.agentpool.eth`), each with its own Arc
-multicoin record (`coinType 2152525650`). ENS is **not optional**: the app
+multicoin record (`coinType 2152525650`) resolving to a Circle
+Developer-Controlled Wallet. Funding runs through `POST /api/agents/fund`,
+which reads `CIRCLE_WALLET_IDS` (index `i` maps to agent`i+1`); there are no
+local keys and no self-custody path. ENS is **not optional**: the app
 resolves each subname live and refuses to fund a wallet that the name does not
 attest — the Circle funder address must equal the live ENS-resolved wallet, and
 an unresolved subname can neither join nor fund. The demo is built on the
