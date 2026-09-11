@@ -253,3 +253,22 @@ export type EnsDelegateResponse =
       readonly revokedWriteError: string;
     }
   | { readonly ok: false; readonly error: string };
+
+/** One USDC transfer from the App Kit treasury (POST /api/agents/treasury). */
+export type TreasurySendStep = {
+  readonly to: string;
+  readonly amountUsdc: string;
+  readonly state: "success" | "pending" | "error" | "noop";
+  readonly txHash: string | null;
+  readonly explorerUrl: string | null;
+  readonly error?: string;
+};
+
+/** App Kit treasury distribution result (POST /api/agents/treasury). */
+export type TreasuryResponse =
+  | {
+      readonly ok: true;
+      readonly treasury: { readonly walletId: string; readonly address: string };
+      readonly sends: readonly TreasurySendStep[];
+    }
+  | { readonly ok: false; readonly error: string };

@@ -39,6 +39,12 @@ wallet out of `CIRCLE_WALLET_IDS` and fund it per-wallet at
 faucet.circle.com: the buy settles as one atomic Multicall3 aggregate, so no
 Gateway deposit is needed.
 
+The App Kit treasury rail is server-only too: `CIRCLE_TREASURY_WALLET_ID` is a
+Circle DCW on Arc Testnet, funded with USDC, that `POST /api/agents/treasury`
+spends to fund wallets via `kit.send` (`CIRCLE_TREASURY_FUND_USDC` sets the
+default per-recipient amount). `CIRCLE_DEPLOYER_WALLET_ID` is used only by
+`deploy-pool-circle.mjs`.
+
 ## Routes
 
 - `/` — agents table, pool-fill progress, trigger button, decision log,
@@ -52,6 +58,10 @@ Gateway deposit is needed.
   pool commits sharing one remainder snapshot, last commit auto-settles);
   returns `FundStep` lines with on-chain hashes, 503 without `CIRCLE_*` env.
   Each funded wallet also provisions its orchestrator slice (see Fund flow).
+- `POST /api/agents/treasury` — App Kit (`@circle-fin/app-kit` + Circle Wallets
+  adapter) USDC funding from `CIRCLE_TREASURY_WALLET_ID` on Arc Testnet via
+  `kit.send`. Body `{to?, amountUsdc?}`: one send when `to` is given, else a
+  fan-out to every `CIRCLE_WALLET_IDS` wallet; returns per-recipient steps.
 - `GET /api/activity` — pool `Committed` + `Settled` + `RoundStarted` events
   (chunked log scan from the pool deploy block), newest first; empty before
   the first commit. Served from a 60s server cache that goes stale instead
@@ -84,6 +94,16 @@ wallet's orchestrator slice; the allocate retries about every 750ms up to
 about 12s on round-tracker-lag 409s only, and fails fast on terminal
 `pool settled: allocations are final` denials. A failed allocate never flips
 a funded step to failed (the money moved, it is only recorded on the step).
+
+## Treasury rail (`lib/appkit.ts`, `api/agents/treasury/route.ts`)
+
+Circle App Kits fund wallets but cannot call contracts, so this is the funding
+half only: `kit.send` moves USDC from the treasury DCW
+(`CIRCLE_TREASURY_WALLET_ID`) to recipients on Arc Testnet, while
+`/api/agents/fund` keeps doing the DCW `approve` + `pool.commit`. The route
+fans out over `CIRCLE_WALLET_IDS` by default, or sends once when `to` is
+supplied, and returns each `BridgeStep`'s state, tx hash, and explorer URL.
+Hard errors resolve per recipient instead of aborting the fan-out.
 
 ## Round reads (`lib/pool-state.ts`)
 
