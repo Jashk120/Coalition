@@ -78,6 +78,19 @@ the agents that pay into the pool. `CIRCLE_DEPLOYER_WALLET_ID` (used only by
 - `POST /api/resale/buy` — agent-5 buyer: USDC `approve` to Multicall3, one
   atomic `aggregate` of `transferFrom` payouts, then orchestrator
   `/commit-mint` against that tx; returns the buyer slice and `toToken`.
+  Execution lives in `lib/resale-execute.ts` (`executeResaleBuy`) so the
+  autonomous path can share it with no behavior drift.
+- `POST /api/agents/resale-run` — autonomous agent-5 resale path (no
+  dashboard): gated by `X-Resale-Run-Key` (`RESALE_RUN_KEY`, falling back
+  to `ORCHESTRATOR_APP_KEY`; missing/blank/wrong key is 401), dry-run by
+  default (`dryRun:false` to spend). Body `{mem?, cu?, dryRun?}`
+  (defaults 200MB + 0.05CU, dry run). Reasons over orchestrator
+  `GET /capacity` (degrades to null when the endpoint is absent) plus
+  subgraph `getPoolHealth` (fail-closed: unset endpoint or query failure
+  forces `skip`), decides via pure `lib/resale-decision.ts`
+  (`decideResaleBuy`), and on `buy` + `dryRun:false` runs
+  `POST /fill-plan` → `executeResaleBuy`. Returns
+  `{ok, action, reason, trace, plan?, buy?}`.
 - `GET /api/resale/market` — per-allocation spare readout from orchestrator
   `GET /usage`, each priced via SDK `fetchQuote`.
 - `POST /api/resale/quota` — x402-Gateway-paid purchase: settles through the

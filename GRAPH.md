@@ -20,7 +20,7 @@ Track: "Best AI Tooling or AI Use Case with The Graph (From Scratch)", $5,000.
 |---|---|---|---|
 | 1 | Built from scratch on The Graph (Start Fresh) | PASS | Git history 2026-09-04 to 2026-09-11; `subgraph/` scaffolded in-repo (`subgraph.yaml`, `schema.graphql`, `src/mapping.ts`); deployed as new Studio slug `coalition-resource-pool`, numeric ID `1760135` (§2) |
 | 2 | Subgraph indexes project contracts live | PASS (live) | Data source `ResourcePool` on `arc-testnet`, address `0x8b9f38c7B005Dd67203e27240F45335a9e64F692`, `startBlock: 61221987`; six event handlers (§4); live query 2026-09-11 returned the pool + 47 commitments (§3) |
-| 3 | App consumes the subgraph (AI tooling or AI use case) | PASS on app reads, GAP on agent reasoning | `readPoolState` is subgraph-first, `readRoster` is subgraph-or-bust, `discoverPools` scans the subgraph (§6); the agent decision loop (`POST /api/agents/run`) still decides from on-chain reads, so The Graph feeds the UI today, not the AI loop (§10) |
+| 3 | App consumes the subgraph (AI tooling or AI use case) | PASS on app reads and agent reasoning | `readPoolState` is subgraph-first, `readRoster` is subgraph-or-bust, `discoverPools` scans the subgraph (§6); the autonomous agent-5 path (`POST /api/agents/resale-run`) decides from `getPoolHealth`, fail-closed (§10, TODO-c resolved). Only the dashboard demo loop (`POST /api/agents/run`) still decides from on-chain reads |
 | 4 | Central, not cosmetic | PASS | `readRoster()` throws `"subgraph roster unavailable: SUBGRAPH_ENDPOINT is not configured"` when unset; no silent fallback exists on that path (`app/lib/pool-state.ts`) |
 | 5 | Reproducible deployment receipt | PASS | Manifest, mapping, dependency, endpoint, IPFS hash, and exact deploy command in §2; Studio page + query endpoint listed |
 | 6 | Video demo | FAIL (TODO) | No video exists; TODO-a (§11); the roster path (no fallback) is the recommended proof beat |
@@ -180,6 +180,7 @@ Query documents in `sdk/src/graph/queries.ts`:
 | `GET /api/roster` → `readRoster()` (`app/app/api/roster/route.ts`, `app/lib/pool-state.ts`) | SUBGRAPH-OR-BUST (mandatory): `getCommitments` + `getDropouts`; throws `"subgraph roster unavailable: SUBGRAPH_ENDPOINT is not configured"` when unset, or `"subgraph roster unavailable: …"` on query failure | NONE. This is the clearest proof The Graph is load-bearing |
 | `GET /api/pools` (`app/app/api/pools/route.ts`) | Uses the subgraph via `discoverPools` when the endpoint is set (candidate scan + subgraph-first fill enrichment) | Explicit `POOL_ADDRESSES` + `POOL_ADDRESS` singleton; an unreachable subgraph degrades silently to those sources |
 | `GET /api/agents` | Pool state portion is subgraph-first via `readPoolState` | Chain fallback per `readPoolState` |
+| `POST /api/agents/resale-run` → `getPoolHealth` (`app/app/api/agents/resale-run/route.ts`, `app/lib/resale-decision.ts`) | SUBGRAPH-OR-BUST for the agent decision: `getPoolHealth` when `SUBGRAPH_ENDPOINT` is set; unset endpoint or query failure fails the decision closed to `skip` with the subgraph error in the reason — no chain fallback exists on this path | NONE for health (fail-closed). Only the orchestrator `GET /capacity` read degrades (to null); the health read never does |
 
 Where The Graph is mandatory (no fallback): `readRoster`. Where it is
 subgraph-first (chain fallback): `readPoolState`, `discoverPools` /
@@ -248,10 +249,14 @@ Regression tests added (`sdk/test/graph.test.ts`):
   from-scratch subgraph plus its load-bearing app reads.
 - The project's x402 flow is Circle Gateway compute-quota payment, not
   payment for Graph queries. No x402 touches the subgraph path.
-- The AI decision loop (`POST /api/agents/run`) currently decides from
-  on-chain reads. Today The Graph is load-bearing for the app's roster and
-  pool views, not for the agent's reasoning; that positioning gap must be
-  closed before submission (TODO-c).
+- The AI decision loop (`POST /api/agents/run`) still decides from
+  on-chain reads. But an autonomous agent path now reasons over subgraph
+  data: `POST /api/agents/resale-run` (agent-5 resale buy) decides via
+  `getPoolHealth` (`settled`, `participantCount`, `forfeitedTotal`,
+  `dropoutCount`) through the pure `decideResaleBuy` in
+  `app/lib/resale-decision.ts`, and the subgraph read is fail-closed —
+  without it the agent skips, so The Graph feeds the AI loop, not just
+  the UI (TODO-c resolved).
 - Pool target (`10000000`) is seeded once in the mapping, not read from the
   contract; a target change on-chain without a mapping update would desync
   the indexed `Pool.target`.
@@ -274,11 +279,10 @@ Regression tests added (`sdk/test/graph.test.ts`):
   (`https://gateway.thegraph.com/api/<API_KEY>/subgraphs/id/<SUBGRAPH_ID>`).
   Record: `graph publish coalition-resource-pool` (or the Studio publish
   flow) + the returned Subgraph ID + a 200 against the gateway URL.
-- TODO-c (owner: agent-loop owner): make an agent reason over subgraph data
-  (for example `Dropout` history via `getDropouts`) so The Graph feeds the
-  AI loop, not just the UI. Record: the `POST /api/agents/run` diff + a
-  before/after decision trace with MCP dead (GraphQL fallback driving the
-  decision, per `plans/subgraph.md` §5).
+- TODO-c (owner: agent-loop owner): RESOLVED — `POST /api/agents/resale-run`
+  reasons over subgraph data (`getPoolHealth` via `decideResaleBuy`, fail-closed
+  to `skip` when the subgraph is unreachable, per §6). Record: the decision
+  trace (`reason` + `trace.reasons`) with `SUBGRAPH_ENDPOINT` set vs unset.
 - TODO-d (owner: submitter): add a "The Graph" section to the root
   `README.md` linking this file, mirroring the existing ENS section.
   Record: `git diff README.md`.
