@@ -25,6 +25,14 @@ export type Dropout = {
   readonly forfeited: bigint;
 };
 
+/** Reliability context for one pool: settlement, size, forfeits, dropouts. */
+export type PoolHealth = {
+  readonly settled: boolean;
+  readonly participantCount: bigint;
+  readonly forfeitedTotal: bigint;
+  readonly dropoutCount: number;
+};
+
 /** Thrown when the subgraph cannot be queried or parsed. */
 export class GraphError extends Error {
   readonly name = "GraphError";

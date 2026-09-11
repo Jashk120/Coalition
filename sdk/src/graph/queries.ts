@@ -2,7 +2,7 @@ import type { Address } from "viem";
 
 import type { GraphClient } from "./client.js";
 import { GraphError } from "./types.js";
-import type { Commitment, Dropout, PoolFill } from "./types.js";
+import type { Commitment, Dropout, PoolFill, PoolHealth } from "./types.js";
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 const UINT_PATTERN = /^\d+$/;
@@ -64,6 +64,17 @@ const DROPOUTS_QUERY = `query GetDropouts($pool: String!) {
   dropouts(where: { pool: $pool }) {
     wallet
     forfeited
+  }
+}`;
+
+const POOL_HEALTH_QUERY = `query GetPoolHealth($id: ID!, $pool: String!) {
+  pool(id: $id) {
+    settled
+    participantCount
+    forfeitedTotal
+  }
+  dropouts(where: { pool: $pool }) {
+    id
   }
 }`;
 
@@ -196,4 +207,32 @@ export async function getDropouts(
     throw new GraphError('graph field "dropouts" is not an array');
   }
   return raw.map(parseDropout);
+}
+
+/** Fetch one pool's reliability context from the subgraph's Pool entity. */
+export async function getPoolHealth(
+  client: GraphClient,
+  pool: string,
+): Promise<PoolHealth> {
+  if (!ADDRESS_PATTERN.test(pool)) {
+    throw new GraphError(`pool "${pool}" is not an address`);
+  }
+  const data = await postQuery(client, POOL_HEALTH_QUERY, {
+    id: pool.toLowerCase(),
+    pool: pool.toLowerCase(),
+  });
+  const raw = data["pool"];
+  if (!isRecord(raw)) {
+    throw new GraphError("graph pool is not an object");
+  }
+  const dropouts = data["dropouts"];
+  if (!Array.isArray(dropouts)) {
+    throw new GraphError('graph field "dropouts" is not an array');
+  }
+  return {
+    settled: parseBoolean(raw["settled"], "settled"),
+    participantCount: parseUint(raw["participantCount"], "participantCount"),
+    forfeitedTotal: parseUint(raw["forfeitedTotal"], "forfeitedTotal"),
+    dropoutCount: dropouts.length,
+  };
 }

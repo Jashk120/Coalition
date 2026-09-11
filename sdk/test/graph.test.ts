@@ -6,6 +6,7 @@ import {
   getCommitments,
   getDropouts,
   getPoolFill,
+  getPoolHealth,
 } from "../src/graph/index.js";
 import type { GraphClient } from "../src/graph/index.js";
 
@@ -241,5 +242,66 @@ describe("getDropouts", () => {
 
     // When/Then: status surfaces as GraphError
     await expect(getDropouts(client(), POOL)).rejects.toThrow(GraphError);
+  });
+});
+
+describe("getPoolHealth", () => {
+  function wireHealth(
+    poolFields: Record<string, unknown> = {},
+    dropouts: unknown[] = [],
+  ) {
+    return {
+      data: {
+        pool: {
+          settled: true,
+          participantCount: "3",
+          forfeitedTotal: "500000",
+          ...poolFields,
+        },
+        dropouts,
+      },
+    };
+  }
+
+  it("parses pool health with dropout count", async () => {
+    // Given: a pool with two dropout rows
+    vi.stubGlobal(
+      "fetch",
+      stubFetch(wireHealth({}, [{ id: "1" }, { id: "2" }])),
+    );
+
+    // When: fetching the pool health
+    const health = await getPoolHealth(client(), POOL);
+
+    // Then: reliability context round-trips exactly
+    expect(health).toEqual({
+      settled: true,
+      participantCount: 3n,
+      forfeitedTotal: 500_000n,
+      dropoutCount: 2,
+    });
+  });
+
+  it("rejects malformed payloads without partial results", async () => {
+    // Given: a payload with a non-uint participantCount
+    vi.stubGlobal(
+      "fetch",
+      stubFetch(wireHealth({ participantCount: "lots" }, [])),
+    );
+
+    // When/Then: typed error, never half-parsed health
+    await expect(getPoolHealth(client(), POOL)).rejects.toThrow(GraphError);
+  });
+
+  it("rejects non-address pools before any request", async () => {
+    // Given: a fetch counter
+    const fetch = stubFetch(wireHealth({}, []));
+    vi.stubGlobal("fetch", fetch);
+
+    // When/Then: local validation fires, zero requests sent
+    await expect(getPoolHealth(client(), "pool-1")).rejects.toThrow(
+      GraphError,
+    );
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
