@@ -843,8 +843,8 @@ export default function DashboardPage() {
             <table>
               <tbody>
                 {fundSteps.map((step) => (
-                  <tr key={step.walletId}>
-                    <td className="mono">{displayAgent(step.walletId)}</td>
+                  <tr key={step.wallet}>
+                    <td className="mono">{displayAgent(step.wallet)}</td>
                     <td>
                       <span
                         className={

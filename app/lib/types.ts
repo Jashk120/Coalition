@@ -143,7 +143,8 @@ export type RosterResponse =
   | { readonly ok: false; readonly error: string };
 
 export type FundStep = {
-  readonly walletId: string;
+  /** The agent's ENS-attested self-custody wallet address. */
+  readonly wallet: string;
   readonly decision: "funded" | "skipped" | "failed";
   readonly reason: string;
   readonly roundId?: string;
@@ -155,7 +156,7 @@ export type FundStep = {
   readonly ensName?: string;
   /** Live ENS-resolved Arc wallet for `ensName`; null when the name has no Arc record. */
   readonly ensWallet?: string | null;
-  /** The Circle funder's on-chain address; null when Circle lookup failed. */
+  /** The signer's on-chain address; null when the key file is unavailable. */
   readonly funderWallet?: string | null;
   /** True only when `funderWallet === ensWallet` (case-insensitive). ENS is load-bearing. */
   readonly ensAttested?: boolean;
