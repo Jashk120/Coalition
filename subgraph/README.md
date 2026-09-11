@@ -6,7 +6,8 @@ testnet (chain `5042002`, RPC `https://rpc.testnet.arc.network`).
 - Pool: `0x8b9f38c7B005Dd67203e27240F45335a9e64F692`
 - Pool state at scaffold time: target 10 USDC (`10000000` atomic, 6-dec),
   `totalCommitted` 0, `settled` false.
-- Indexer: Subgraph Studio deployment — ID: `TODO_STUDIO_DEPLOYMENT_ID`
+- Live deployment (v0.0.1): https://thegraph.com/studio/subgraph/coalition-resource-pool
+- Query endpoint: `https://api.studio.thegraph.com/query/1760135/coalition-resource-pool/v0.0.1`
 
 Event shapes are derived from `sdk/src/pool/abi.ts` (generated from
 `contracts/out/ResourcePool.sol/ResourcePool.json`); `abis/ResourcePool.json`
@@ -22,13 +23,17 @@ indexing the v1 legs still captures every fund movement. Amounts are
 npm install
 ```
 
-Requires Node.js 26 or later (see repo root `README.md`).
+Requires Node.js 22 or later (tested on Node 24; see repo root `README.md`).
 
 ## Deploy
 
+First create the subgraph in the Subgraph Studio UI (slug `coalition-resource-pool`)
+and copy its deploy key. Current `graph-cli` `deploy` has no `--studio` flag, so
+target `--node` directly:
+
 ```sh
-# One-time: authenticate against Subgraph Studio (key from the Studio UI —
-# never commit it).
+# One-time: authenticate against Subgraph Studio (deploy key from the Studio
+# UI, never committed).
 graph auth --studio <DEPLOY_KEY>
 
 # Regenerate AssemblyScript types from schema + ABI.
@@ -37,13 +42,15 @@ npm run codegen
 # Compile mappings.
 npm run build
 
-# First time only: create the Studio subgraph, then publish.
-npm run create -- --node https://api.studio.thegraph.com/deploy/
-npm run deploy -- --node https://api.studio.thegraph.com/deploy/ --ipfs https://api.studio.thegraph.com/ipfs/
+# Deploy. Bump --version-label to publish an update.
+graph deploy --node https://api.studio.thegraph.com/deploy/ --ipfs https://api.thegraph.com/ipfs/api/v0 --version-label v0.0.1 coalition-resource-pool
 ```
 
-After deploy, replace `TODO_STUDIO_DEPLOYMENT_ID` above with the Studio
-deployment ID and verify the endpoint answers, e.g.:
+> The IPFS endpoint is `https://api.thegraph.com/ipfs/api/v0`; the older
+> `.../studio.thegraph.com/ipfs/` URL returns 404. Studio does not auto-create
+> the subgraph, so create the slug in the UI first.
+
+After deploy, verify the endpoint answers, e.g.:
 
 ```graphql
 {
