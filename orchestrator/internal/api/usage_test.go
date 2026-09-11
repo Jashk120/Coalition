@@ -39,9 +39,11 @@ func Test_Usage_empty_ledger(t *testing.T) {
 	}
 }
 
-// Test_Usage_one_wallet_with_usage: allocate burns a slice, AddUsage meters
-// spend, and /usage reports budgets (cpu*window*3600, mem*window), floored
-// remaining, and 10% used on each leg — with no auth headers attached.
+// Test_Usage_one_wallet_with_usage: allocate burns a slice and AddUsage
+// meters spend, but /usage exposes NOTHING until funding closes — joining
+// grants no visibility. After MarkSettled it reports budgets
+// (cpu*window*3600, mem*window), floored remaining, and 10% used on each
+// leg — with no auth headers attached.
 func Test_Usage_one_wallet_with_usage(t *testing.T) {
 	f := newFixture()
 	allocate(t, f, testWalletA, 0.2, 800)
@@ -50,6 +52,33 @@ func Test_Usage_one_wallet_with_usage(t *testing.T) {
 	}
 
 	rec := doRequest(f, http.MethodGet, "/usage", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var hidden struct {
+		Agents []struct {
+			Wallet string `json:"wallet"`
+		} `json:"agents"`
+		Settled bool `json:"settled"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &hidden); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if hidden.Agents == nil {
+		t.Fatal("agents must encode as [], never null")
+	}
+	if len(hidden.Agents) != 0 {
+		t.Fatalf("pre-settle agents=%d, want 0", len(hidden.Agents))
+	}
+	if hidden.Settled {
+		t.Fatal("settled must be false before any settle")
+	}
+
+	// Settling the ledger exposes the row with budgets, remaining, percents,
+	// and both top-level and per-row settled flags, so the dashboard can
+	// badge rows as final without a second request.
+	f.led.MarkSettled()
+	rec = doRequest(f, http.MethodGet, "/usage", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -101,27 +130,7 @@ func Test_Usage_one_wallet_with_usage(t *testing.T) {
 	if !a.HasContainer {
 		t.Fatal("allocate-bound wallet must report hasContainer=true")
 	}
-	if a.Settled || out.Settled {
-		t.Fatal("settled must be false before any settle")
-	}
-
-	// Settling the ledger flips both the top-level and per-row flags, so the
-	// dashboard can badge rows as final without a second request.
-	f.led.MarkSettled()
-	rec = doRequest(f, http.MethodGet, "/usage", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	var settled struct {
-		Agents []struct {
-			Settled bool `json:"settled"`
-		} `json:"agents"`
-		Settled bool `json:"settled"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &settled); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !settled.Settled || len(settled.Agents) != 1 || !settled.Agents[0].Settled {
-		t.Fatalf("settled flags not flipped: %+v", settled)
+	if !a.Settled || !out.Settled {
+		t.Fatal("settled flags must be true once funding closes")
 	}
 }

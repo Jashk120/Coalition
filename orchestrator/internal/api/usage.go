@@ -40,7 +40,10 @@ type usageResponse struct {
 }
 
 // handleUsage lists per-agent compute usage for settlement visibility: who is
-// actually burning compute versus sitting on entitlement.
+// actually burning compute versus sitting on entitlement. Agents are exposed
+// ONLY once funding closes (settled): joining the pool grants no visibility,
+// the settled round does. Before that the list is empty (never null) with
+// settled=false, so dashboard polling renders zero rows.
 //
 // Public like /quote (no app key, no bearer): dashboard polling must work
 // before anyone holds credentials and after funding closes. Deliberately NOT
@@ -52,6 +55,14 @@ func (s *Server) handleUsage(w http.ResponseWriter, _ *http.Request) {
 	// are only final once funding closes, and round-scoped nuance lives in
 	// the settle listener, not in this dashboard list.
 	settled := s.ledger.FundingClosed()
+	if !settled {
+		writeJSON(w, http.StatusOK, usageResponse{
+			Agents:      []agentUsage{},
+			Settled:     false,
+			WindowHours: float64(s.cfg.WindowHours),
+		})
+		return
+	}
 
 	// ListContainers snapshots wallet->container bindings sorted by wallet;
 	// Wallets is sorted separately since the two scans run under different
