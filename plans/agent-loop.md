@@ -25,9 +25,13 @@ per `sdk/src/chains/arc.ts` — either reaches testnet).
 ## 1. Seeds (`demo/agents.seeds.json`)
 
 4 of the 5 funded wallets. The 5th is held back as the outside resale buyer
-and never commits.
+and never commits. Funding is Circle Developer-Controlled Wallets only:
+`CIRCLE_WALLET_IDS[i]` maps to `SEED_META[i].ensName` (agent`i+1`). No
+self-custody path exists (`app/lib/seed-keys.ts`,
+`~/.coalition/seed-keys.json`, `SEED_KEYS_FILE`, `SEED_PRIVATE_KEYS`, and
+`fund-pool.mjs` for agent funding are removed).
 
-| # | subname (`ensName`) | wallet (ENS cross-check only, no fallback) | cpu | mem | share |
+| # | subname (`ensName`) | Circle funder (`CIRCLE_WALLET_IDS[i]`, ENS cross-check, no fallback) | cpu | mem | share |
 |---|---|---|---|---|---|
 | agent-1 | `agent1.agentpool.eth` | `0x4f188f3da697984f0fc02e61fda4a34b00abf39a` | 0.2 | 800 MB | $2.50 = `2500000` atomic |
 | agent-2 | `agent2.agentpool.eth` | `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b` | 0.15 | 600 MB | $2.50 = `2500000` atomic |
@@ -40,9 +44,15 @@ optional `agent5.agentpool.eth` — never commits, stays outside the loop).
 Parent `agentpool.eth`, Arc coin type `2152525650` (`ARC_COIN_TYPE`,
 `0x80000000 | 5042002`) — see the `ens` block in `demo/agents.seeds.json`
 and `sdk/src/demo/seeds.ts` (`DEMO_SEED_AGENTS`, same order, same values).
-`ensName` is the live identity; `wallet` is the ENS cross-check
-(resolved Arc wallet must equal it). There is no fallback: an unresolved
-seed carries no wallet and cannot run. Sequential order agent-1 to agent-4 is unchanged.
+`ensName` is the live identity; the Circle funder address is the ENS
+cross-check (resolved Arc wallet must equal `CIRCLE_WALLET_IDS[i]`).
+There is no fallback: an unresolved seed carries no wallet and cannot run;
+`resolveSeedAgents` returns `unresolved` with a reason. Sequential order
+agent-1 to agent-4 is unchanged. `CIRCLE_PROVIDER_WALLET_ID` is funder 4
+(`0x0a6415e892972214bceb0271746cb45932f7eaf1`), so agent4 is also the pool
+provider. Demo pool round 11 is settled: open a fresh round before funding.
+`CIRCLE_TREASURY_WALLET_ID` (App Kit `kit.send` re-funding rail) is
+currently UNSET (503 until set) and must not be the provider.
 
 Totals: cpu `0.70 / 1.0`, mem `2800 / 4096 MB` (fits orchestrator defaults
 `CPU_UNITS=1`, `MEM_MB=4096`, `MAX_AGENTS=5`); funding `10.00 / 10.00` —
@@ -221,17 +231,22 @@ A skip never touches the wallet.
 
 Funding requires ENS attestation: `POST /api/agents/fund` resolves each
 `SEED_META[i].ensName` live and requires `funderWallet == ENS wallet`
-(case-insensitive). An unattested step is `failed` and no approve, commit,
-or allocate happens for it. `POST /api/agents/run` resolves every seed
-live first under the same rule.
+(case-insensitive). A funder whose Circle address != the live
+`agentN.agentpool.eth` record fails the step with no transaction: no
+approve, no commit, no allocate. `FundStep` carries `wallet` (funder
+address), `ensName`, `ensWallet`, `funderWallet`, `ensAttested`. No fallback
+wallet exists anywhere. `POST /api/agents/run` is a dry-run that resolves
+every seed live under the same rule.
 
 Agents sign via Circle Developer-Controlled Wallets (`CIRCLE_WALLET_IDS`):
-index `i` maps to `SEED_META[i].ensName`, so `CIRCLE_WALLET_IDS[i]`'s address
-must equal `agentN.agentpool.eth`'s Arc record — `POST /api/agents/fund` runs
-the `approve` then `commit` through Circle and keeps the ENS attestation above.
+index `i` maps to `SEED_META[i].ensName` (agent`i+1`), so
+`CIRCLE_WALLET_IDS[i]`'s address must equal `agentN.agentpool.eth`'s Arc
+record (verified 2026-09-11) — `POST /api/agents/fund` runs the `approve`
+then `commit` through Circle (`circle wallet execute` / DCW), waits for
+receipts, and provisions the orchestrator slice.
 USDC `0x3600000000000000000000000000000000000000` (6-dec view).
 
-CLI equivalent (same order, same cap rule; `--address` is the funder):
+CLI equivalent (same order, same cap rule; `--address` is the Circle funder):
 
 ```sh
 circle wallet execute "approve(address,uint256)" \
@@ -246,7 +261,16 @@ circle wallet execute "commit(uint256)" \
   --chain ARC-TESTNET
 ```
 
-Substitute `--address` per seed for agent-2/3/4. SDK equivalent:
+Substitute `--address` per Circle funder:
+
+| # | Circle funder `--address` |
+|---|---|
+| agent-1 | `0x4f188f3da697984f0fc02e61fda4a34b00abf39a` |
+| agent-2 | `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b` |
+| agent-3 | `0xde086aa43915670c74444b3e5a464d992e1f7770` |
+| agent-4 | `0x0a6415e892972214bceb0271746cb45932f7eaf1` |
+
+SDK equivalent:
 
 ```ts
 import { commitToPool, wouldExceedTarget } from "@jx-nexus/coalition";
@@ -320,7 +344,7 @@ After the 4-agent loop, the held-out buyer `0x2e07…` prices spare capacity
 without joining — the §6 Nanopayments beat:
 
 ```sh
-curl -s 'http://localhost:8080/quote?seller=0x0e14d61f2bf9e1a494677257b8855e7ed091d983'
+curl -s 'http://localhost:8080/quote?seller=0x4f188f3da697984f0fc02e61fda4a34b00abf39a'
 circle services search "compute"   # discover-services skill
 circle services pay https://seller.example/compute --address 0x2e07588b8180c8235c2a1be7ffa2639545630dd1 --chain ARC-TESTNET --max-amount 0.01
 ```

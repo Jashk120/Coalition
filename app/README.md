@@ -26,11 +26,32 @@ while the orchestrator tracks another. `ARC_RPC_URL` should be a private
 endpoint when available: the public `rpc.testnet.arc.io` free tier 429s
 under the combined polling load (dashboard agents state every 10s, activity
 every 15s, orchestrator usage every 1s, plus the orchestrator settle poller
-at `POLL_INTERVAL` 5s). Funding needs `CIRCLE_API_KEY`,
-`CIRCLE_ENTITY_SECRET`, and `CIRCLE_WALLET_IDS` (create ARC-TESTNET wallets,
-then fund each wallet with per-wallet USDC via faucet.circle.com; the
-approve passes empty but the commit needs balance). `CIRCLE_WALLET_IDS[i]`
-must resolve to the wallet `agentN.agentpool.eth` points at.
+at `POLL_INTERVAL` 5s).
+
+Agent funding is Circle Developer-Controlled Wallets only. There is no
+self-custody path: `app/lib/seed-keys.ts`, `~/.coalition/seed-keys.json`,
+`SEED_KEYS_FILE`, `SEED_PRIVATE_KEYS`, and `fund-pool.mjs` as an
+agent-funding path are removed and must not be used. Funding needs
+`CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, and `CIRCLE_WALLET_IDS` (create
+ARC-TESTNET wallets, then fund each wallet with per-wallet USDC via
+faucet.circle.com; the approve passes empty but the commit needs balance).
+`POST /api/agents/fund` reads `CIRCLE_WALLET_IDS`; index `i` maps to
+`SEED_META[i].ensName` (agent`i+1`). It signs a USDC `approve` then a pool
+`commit` via Circle, waits for receipts, and provisions the orchestrator
+slice. `POST /api/agents/run` is a dry-run that resolves every seed live.
+`CIRCLE_WALLET_IDS[i]` must resolve to the wallet `agentN.agentpool.eth`
+points at (Arc coinType 2152525650, verified 2026-09-11):
+
+| # | `ensName` | Circle funder wallet |
+|---|---|---|
+| agent1 | `agent1.agentpool.eth` | `0x4f188f3da697984f0fc02e61fda4a34b00abf39a` |
+| agent2 | `agent2.agentpool.eth` | `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b` |
+| agent3 | `agent3.agentpool.eth` | `0xde086aa43915670c74444b3e5a464d992e1f7770` |
+| agent4 | `agent4.agentpool.eth` | `0x0a6415e892972214bceb0271746cb45932f7eaf1` |
+
+`CIRCLE_PROVIDER_WALLET_ID` is funder 4 (`0x0a64…af1`), so agent4 is also
+the pool provider (settle payee). Demo pool round 11 is settled: open a
+fresh round before funding.
 
 The resale buy flow is server-only as well: `ORCHESTRATOR_APP_KEY` (or
 `APP_KEY`) authorizes the orchestrator `/commit-mint` call, and
@@ -40,13 +61,14 @@ wallet out of `CIRCLE_WALLET_IDS` and fund it per-wallet at
 faucet.circle.com: the buy settles as one atomic Multicall3 aggregate, so no
 Gateway deposit is needed.
 
-The App Kit treasury rail is server-only too: `CIRCLE_TREASURY_WALLET_ID` is a
-dedicated operator DCW on Arc Testnet, funded with USDC, that
-`POST /api/agents/treasury` spends to re-fund agents via `kit.send`
-(`CIRCLE_TREASURY_FUND_USDC` sets the default per-recipient amount). It must
-not be the pool provider — the provider is the settle payee and must not fund
-the agents that pay into the pool. `CIRCLE_DEPLOYER_WALLET_ID` (used only by
-`deploy-pool-circle.mjs`) defaults to `CIRCLE_PROVIDER_WALLET_ID`.
+The App Kit treasury rail is server-only too: `POST /api/agents/treasury`
+uses Circle App Kit `kit.send` from `CIRCLE_TREASURY_WALLET_ID` to the agent
+wallets (`CIRCLE_TREASURY_FUND_USDC` sets the default per-recipient amount).
+`CIRCLE_TREASURY_WALLET_ID` is currently UNSET: the rail returns 503 until
+it is set. When set it must be a dedicated operator DCW on Arc Testnet,
+funded with USDC, and it must not be the provider. `CIRCLE_DEPLOYER_WALLET_ID`
+(used only by `deploy-pool-circle.mjs`) defaults to
+`CIRCLE_PROVIDER_WALLET_ID`.
 
 ## Routes
 
@@ -64,8 +86,9 @@ the agents that pay into the pool. `CIRCLE_DEPLOYER_WALLET_ID` (used only by
   ENS is **mandatory**: before any approve/commit it resolves each funder's
   `agentN.agentpool.eth` Arc record and requires
   `funderWallet === ensWallet`; a mismatch or missing record fails the step
-  with no transaction (`ensName`/`ensWallet`/`funderWallet`/`ensAttested` are
-  reported per step). Align funders first via `node scripts/repoint-ens.mjs`
+  with no transaction (`wallet`/`ensName`/`ensWallet`/`funderWallet`/`ensAttested` are
+  reported per step). No fallback wallet exists anywhere; `resolveSeedAgents`
+  returns `unresolved` with a reason. Align funders first via `node scripts/repoint-ens.mjs`
   (see [`../ENS.md`](../ENS.md)). Each funded wallet also provisions its
   orchestrator slice (see Fund flow).
 - `POST /api/agents/treasury` — App Kit (`@circle-fin/app-kit` + Circle Wallets
@@ -123,14 +146,16 @@ a funded step to failed (the money moved, it is only recorded on the step).
 ## Treasury rail (`lib/appkit.ts`, `api/agents/treasury/route.ts`)
 
 After a round settles, the agents' USDC is in the pool (paid out to the
-provider), so a fresh round needs fresh agent balances. This rail recycles the
-provider's settle payout back to the agents: `kit.send` (Circle App Kits +
-Circle Wallets adapter) reads each recipient's on-chain USDC balance and tops
-it up to `CIRCLE_TREASURY_FUND_USDC` (default 2.50, plus a small Arc gas
-buffer) only when it is below that target — already-funded wallets are skipped,
-so it is idempotent. It fans out over `CIRCLE_WALLET_IDS` (never the treasury
-itself) or targets one wallet via `to`. App Kit cannot call contracts, so
-`/api/agents/fund` keeps doing the DCW `approve` + `pool.commit`.
+provider, which is funder 4 / agent4), so a fresh round needs fresh agent
+balances. This rail sends from `CIRCLE_TREASURY_WALLET_ID` to the agents via
+`kit.send` (Circle App Kits + Circle Wallets adapter): it reads each
+recipient's on-chain USDC balance and tops it up to
+`CIRCLE_TREASURY_FUND_USDC` (default 2.50, plus a small Arc gas buffer) only
+when it is below that target — already-funded wallets are skipped, so it is
+idempotent. `CIRCLE_TREASURY_WALLET_ID` is currently UNSET (503 until set)
+and must not be the provider. It fans out over `CIRCLE_WALLET_IDS` (never
+the treasury itself) or targets one wallet via `to`. App Kit cannot call
+contracts, so `/api/agents/fund` keeps doing the DCW `approve` + `pool.commit`.
 
 ## Round reads (`lib/pool-state.ts`)
 

@@ -1,3 +1,14 @@
+> **Status note 2026-09-11 (current):** agent funding is Circle
+> Developer-Controlled Wallets (`CIRCLE_WALLET_IDS[i]` ↔ `SEED_META[i].ensName`).
+> `agentN.agentpool.eth` are re-pointed to the Circle funders: agent1
+> `0x4f188f3da697984f0fc02e61fda4a34b00abf39a`, agent2
+> `0x8c4d4ca5fe56c4aef3e7b424879f25693e9d5a2b`, agent3
+> `0xde086aa43915670c74444b3e5a464d992e1f7770`, agent4
+> `0x0a6415e892972214bceb0271746cb45932f7eaf1`. ENS is mandatory (funder must
+> equal the ENS-resolved wallet; no fallback). The body below is the earlier
+> 2026-09-08 verification record and is retained as history; the seed-wallet
+> addresses in the §7 table are superseded.
+
 # ENSv2 Sepolia Beta — Live Verification + Registration Plan (agentpool.eth + 4 agents)
 
 Verified 2026-09-08 (UTC). **Report only — no on-chain writes were made, no private keys touched.**
