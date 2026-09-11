@@ -5,8 +5,8 @@ import {
   USDC_ADDRESS,
   createCircleClient,
   getWalletAddress,
-  readCircleEnv,
 } from "@/lib/circle-fund";
+import { SEED_META } from "@/lib/constants";
 import {
   defaultFundUsdc,
   readTreasuryEnv,
@@ -38,9 +38,10 @@ function errorMessage(error: unknown): string {
  * is topped up to `amountUsdc` (default CIRCLE_TREASURY_FUND_USDC, else 2.50)
  * only when its on-chain USDC balance is below that target; already-funded
  * wallets are skipped. Body `{ to?, amountUsdc? }`: `to` targets one wallet,
- * otherwise it fans out to every CIRCLE_WALLET_IDS funder (never the treasury
- * itself). Funding only — App Kit cannot call the pool, so the DCW approve +
- * commit path in /api/agents/fund is unchanged.
+ * otherwise it fans out to the self-custody agent wallets in `SEED_META`
+ * (never the treasury itself). Funding only — App Kit cannot call the pool, so
+ * the viem approve + commit path in /api/agents/fund signs with the agents'
+ * own keys.
  */
 export async function POST(
   request: Request,
@@ -48,10 +49,6 @@ export async function POST(
   const env = readTreasuryEnv();
   if (!env.ok) {
     return NextResponse.json({ ok: false, error: env.error }, { status: 503 });
-  }
-  const circleEnv = readCircleEnv();
-  if (!circleEnv.ok) {
-    return NextResponse.json({ ok: false, error: circleEnv.error }, { status: 503 });
   }
   const providerWalletId = process.env["CIRCLE_PROVIDER_WALLET_ID"] ?? "";
   if (providerWalletId !== "" && env.treasuryWalletId === providerWalletId) {
@@ -107,13 +104,8 @@ export async function POST(
   if (to !== undefined) {
     recipients = [to];
   } else {
-    const resolved = await Promise.all(
-      circleEnv.walletIds.map((walletId) => getWalletAddress(client, walletId)),
-    );
-    recipients = resolved.filter(
-      (address): address is string =>
-        address !== null &&
-        address.toLowerCase() !== treasuryAddress.toLowerCase(),
+    recipients = SEED_META.map((seed) => seed.wallet).filter(
+      (address) => address.toLowerCase() !== treasuryAddress.toLowerCase(),
     );
   }
   if (recipients.length === 0) {
