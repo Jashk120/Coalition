@@ -1,6 +1,6 @@
-# ENS.md: Best Use of ENSv2 ($4,500) submission receipt
+# ENS.md: Best Use of ENSv2 submission receipt
 
-**Overall: ENS is central and load-bearing, not optional.** Funding is gated
+**Overall: ENS is central and load-bearing.** Funding is gated
 on `funderWallet == ENS wallet` (see §7b). Resolution was re-verified
 2026-09-11 via `cast` against
 `https://ethereum-sepolia-rpc.publicnode.com`, independent of the repo's
@@ -20,6 +20,33 @@ API: `private=false`). ENS commits are in `origin/main`.
 | 4 | Public repo + ENS.md receipt (Sepolia addresses, EAC roles) | PASS on receipt, PASS on visibility | This file; repo public at https://github.com/Jashk120/Coalition, ENS commits in `origin/main` |
 | 5 | Video OR live demo | PENDING | Not yet published; §8 carries the recording plan |
 | 6 | Beta caveats on record | PASS | §9 below |
+
+The identity and attestation path — subname registry to Arc wallet to the funding gate:
+
+```mermaid
+flowchart TD
+    subgraph Sepolia["Ethereum Sepolia · ENSv2"]
+        ETHREG["ETHRegistry (.eth)<br/>0xbdc85d…0E2"] -->|owns| PARENT["agentpool.eth (parent)<br/>owner 0x78F3…A42a"]
+        PARENT -->|"registrar role<br/>(ROLE_REGISTRAR + ROLE_RENEW)"| USERREG["Own subname registry<br/>0x365d…e1dc34<br/>(UserRegistry impl, EIP-1967 proxy)"]
+
+        USERREG -->|register| A1["agent1.agentpool.eth"]
+        USERREG -->|register| A2["agent2.agentpool.eth"]
+        USERREG -->|register| A3["agent3.agentpool.eth"]
+        USERREG -->|register| A4["agent4.agentpool.eth"]
+
+        A1 & A2 & A3 & A4 -->|"shared resolver"| RESOLVER["Permissioned Resolver<br/>0x2f60…9973<br/>(EAC-capable: authorizeAddrRoles / authorizeTextRoles)"]
+
+        RESOLVER -->|"setAddr(node, coinType 2152525650, wallet)"| REC["Arc multicoin address record"]
+    end
+
+    REC -->|"resolveArcWallet()"| WALLET["Circle Developer-Controlled Wallet<br/>(funder 1..4)"]
+    WALLET -->|"funderWallet == ensWallet?"| GATE{"ENS attestation<br/>(no fallback)"}
+    GATE -->|pass| FUND["POST /api/agents/fund<br/>approve + commit on Arc"]
+    GATE -->|fail| SKIP["status: unresolved / failed<br/>no approve, no commit"]
+
+    WALLET -.->|"findAgentsByOwner"| IDREG["ERC-8004 IdentityRegistry (Arc)"]
+    IDREG -.->|"getReputationSummary"| REPREG["ERC-8004 ReputationRegistry (Arc)"]
+```
 
 ## 2. Sepolia addresses used
 

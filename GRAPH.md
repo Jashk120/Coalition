@@ -15,7 +15,7 @@ Coalition enters the Start Fresh (Net-new) build pool: git history begins
 
 ## 1. Qualification fit (per track requirement)
 
-Track: "Best AI Tooling or AI Use Case with The Graph (From Scratch)", $5,000.
+Track: "Best AI Tooling or AI Use Case with The Graph (From Scratch)".
 
 | # | Requirement | Verdict | Evidence |
 |---|---|---|---|
@@ -25,6 +25,33 @@ Track: "Best AI Tooling or AI Use Case with The Graph (From Scratch)", $5,000.
 | 4 | Central, not cosmetic | PASS | `readRoster()` throws `"subgraph roster unavailable: SUBGRAPH_ENDPOINT is not configured"` when unset; no silent fallback exists on that path (`app/lib/pool-state.ts`) |
 | 5 | Reproducible deployment receipt | PASS | Manifest, mapping, dependency, endpoint, IPFS hash, and exact deploy command in §2; Studio page + query endpoint listed |
 | 6 | Video demo | PENDING | Not yet published; the roster path (no fallback) is the recommended proof beat |
+
+How pool events reach the subgraph, and which reads depend on it:
+
+```mermaid
+flowchart TD
+    POOL["ResourcePool (Arc)<br/>emits 6 event types"]
+
+    POOL --> MAP["Subgraph mapping.ts<br/>(one handler per event)"]
+
+    MAP --> ENT["Indexed entities<br/>Pool, Commitment, Dropout,<br/>Settlement, Refund, Completion"]
+
+    ENT --> READS
+
+    subgraph READS["Who reads the subgraph"]
+        direction TB
+        ROSTER["Roster<br/>(commitments + dropouts)<br/>no chain fallback"]
+        STATE["Pool state<br/>(fill, target, settled)<br/>chain fallback if down"]
+        DISC["Pool discovery<br/>chain fallback if down"]
+        HEALTH["Resale health check<br/>fails closed, no fallback"]
+    end
+
+    ROSTER --> APP["Dashboard app"]
+    STATE --> APP
+    DISC --> APP
+    HEALTH --> AGENT["Autonomous resale agent"]
+
+```
 
 ## 2. Deployment facts
 

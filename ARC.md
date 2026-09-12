@@ -3,10 +3,21 @@
 **Overall: Arc is load-bearing, not cosmetic.** Coalition settles its N-agent
 pooling contract (`ResourcePool`) on Arc testnet, moves USDC through Circle
 Developer-Controlled Wallets, settles a resale buy as one atomic Multicall3 USDC
-aggregate, and uses Arc's native ERC-8004 identity and reputation registries.
-Gas is paid in native USDC. This single receipt covers both Circle tracks under
-the ETHOnline 2026 Arc partner slot: **Circle DeFi** and **Circle Agentic
-Economy**.
+aggregate.
+Gas is paid in native USDC. This single receipt covers four Circle-track
+submissions built on the same Arc deployment: the ETHOnline 2026 Arc partner
+slot (**Circle DeFi** and **Circle Agentic Economy**, §1–§9), plus two
+separately-named bounties evaluated against the same repo — **Best
+DeFi/Onchain Finance Application** (§10) and **Best Agentic Economy
+Application with Circle Agent Stack** (§11).
+
+Note on wallets: Circle Developer-Controlled Wallets are a **Circle Wallets**
+product, and Circle Wallets is listed as its own core product on both the
+DeFi/Onchain Finance and Agentic Economy bounty pages — separate from the
+Circle **Agent Stack** line (the 2-of-2 MPC Agent Wallet product). DCW usage
+counts as in-scope Circle Wallets evidence for every track below; only the
+Agent Stack-branded Agent Wallet path is the piece that was not shipped (§7,
+§9, §11).
 
 Repo is PUBLIC: https://github.com/Jashk120/Coalition.
 
@@ -16,40 +27,37 @@ Repo is PUBLIC: https://github.com/Jashk120/Coalition.
 |---|---|---|---|
 | 1 | Working frontend + backend + reusable SDK | PASS | `app/` (Next.js dashboard), `orchestrator/` (Go service, stdlib only), `sdk/` (`@jx-nexus/coalition`, consumed by the app via `file:../sdk`) |
 | 2 | Custom `ResourcePool` (N-way threshold pooling) | PASS (live) | `contracts/src/ResourcePool.sol`; deployed at `0x8b9f…F692` on Arc testnet, deploy tx `0xb314…a279` (§3) |
-| 3 | Native ERC-8004 identity + reputation | PASS on integration, PARTIAL on live outcomes | SDK `identity/` + `reputation/` wrappers (`registerAgent` / `resolveAgent` / `findAgentsByOwner`; `getReputationSummary` / `readFeedback`); the pool writes objective outcomes via `IPoolReputation.giveFeedback` and is Forge-tested. No live dropout/completion feedback transaction is recorded (§6, §10) |
-| 4 | Agent-initiated USDC transactions | PASS via Circle Developer-Controlled Wallets | `POST /api/agents/fund` drives DCW `approve` + `commit` on Arc; no local keys and no self-custody path (§4.1) |
-| 5 | Circle App Kit "where relevant" | PASS | `POST /api/agents/treasury` uses App Kit `kit.send` to re-fund agents on Arc Testnet (§4.2) |
-| 6 | Circle Contracts (Smart Contract Platform) | PASS | `app/deploy-pool-circle.mjs` deploys `ResourcePool` through Circle Contracts on `ARC-TESTNET` (§4.3) |
-| 7 | x402 / Nanopayments resale rail as a complement | PASS (server-side) | `POST /api/resale/quota` settles through Circle Gateway middleware on `eip155:5042002`; the atomic buyer settlement itself is Multicall3 + USDC (§4.4, §4.5) |
-| 8 | Public GitHub repo + receipt | PASS | Repo public; this file |
-| 9 | Demo video | PENDING | Not yet published (§10) |
-| 10 | Architecture diagram | PASS | §2 |
-| 11 | Business narrative | PASS | §9 |
+| 3 | Agent-initiated USDC transactions | PASS via Circle Developer-Controlled Wallets | `POST /api/agents/fund` drives DCW `approve` + `commit` on Arc; no local keys and no self-custody path (§4.1) |
+| 4 | Circle App Kit "where relevant" | PASS | `POST /api/agents/treasury` uses App Kit `kit.send` to re-fund agents on Arc Testnet (§4.2) |
+| 5 | Circle Contracts (Smart Contract Platform) | PASS | `app/deploy-pool-circle.mjs` deploys `ResourcePool` through Circle Contracts on `ARC-TESTNET` (§4.3) |
+| 6 | x402 / Nanopayments resale rail as a complement | PASS (server-side) | `POST /api/resale/quota` settles through Circle Gateway middleware on `eip155:5042002`; the atomic buyer settlement itself is Multicall3 + USDC (§4.4, §4.5) |
+| 7 | Public GitHub repo + receipt | PASS | Repo public; this file |
+| 8 | Demo video | PENDING | Not yet published (§9) |
+| 9 | Architecture diagram | PASS | §2 |
+| 10 | Business narrative | PASS | §8 |
 
 ## 2. Architecture at a glance
 
-```text
-┌────────────────────── Arc testnet (chain 5042002, gas in native USDC) ──────────────────────┐
-│                                                                                             │
-│   ERC-8004 IdentityRegistry             ERC-8004 ReputationRegistry                          │
-│   0x8004A818…BD9e                        0x8004B663…8713                                    │
-│   (agent identity, SDK reads)            (feedback graph; pool writes objective outcomes)   │
-│                                                                                             │
-│   ResourcePool  0x8b9f38c7B005Dd67203e27240F45335a9e64F692                                  │
-│   commit / dropOut / settle / finalizeExpired / claimRefund / recordCompletions              │
-│   ── USDC 0x3600…0000 (6-dec ERC-20 view) ── provider payout on threshold ──►               │
-│                                                                                             │
-│   Circle Developer-Controlled Wallets ── approve + commit                                    │
-│   Multicall3 0xcA11…CA11 ── atomic transferFrom resale settlement                           │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
-        ▲                                        │ events
-        │ ENS subname → Arc wallet (Sepolia)     ▼
-   agentN.agentpool.eth                  Subgraph Studio (arc-testnet)
-                                         coalition-resource-pool (ID 1760135)
+```mermaid
+flowchart TB
+    ENS["ENSv2 · Sepolia<br/>agentN.agentpool.eth"] -->|"resolves to<br/>(coinType 2152525650)"| DCW
+
+    subgraph Arc["Arc testnet · chain 5042002 · gas paid in native USDC"]
+        DCW["Circle Developer-Controlled Wallets<br/>approve + commit"]
+        POOL["ResourcePool<br/>0x8b9f38c7…F692<br/>commit / dropOut / settle /<br/>finalizeExpired / claimRefund / recordCompletions"]
+        USDC["USDC (6-dec ERC-20 view)<br/>0x3600…0000"]
+        MC["Multicall3<br/>0xcA11…CA11"]
+
+        DCW -->|"approve + commit"| POOL
+        POOL -->|"payout on threshold"| USDC
+        DCW -->|"atomic transferFrom<br/>(resale settlement)"| MC
+    end
+
+    POOL -->|"events"| GRAPH["Subgraph Studio · arc-testnet<br/>coalition-resource-pool (ID 1760135)"]
 ```
 
 Identity/discovery is ENSv2 (§`ENS.md`), indexing is The Graph (§`GRAPH.md`), and
-Arc is the settlement, wallet, and agent-standard layer documented here.
+Arc is the settlement and wallet layer documented here.
 
 ## 3. Arc deployment facts
 
@@ -71,14 +79,11 @@ Arc is the settlement, wallet, and agent-standard layer documented here.
 | Target | `10000000` atomic = 10.00 USDC |
 | `maxParticipants` / cap | `4` / `10` |
 | `resourceURI` | `ipfs://coalition-v2-judges` |
-| ERC-8004 IdentityRegistry | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
-| ERC-8004 ReputationRegistry | `0x8004B663056A597Dffe9eCcC1965A193B7388713` |
 | Multicall3 | `0xcA11bde05977b3631167028862bE2a173976CA11` |
 | Circle GatewayWallet (testnet) | `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` |
 | Circle Gateway facilitator | `https://gateway-api-testnet.circle.com` |
 
-The `ResourcePool` constructor order (matches `app/deploy-pool-circle.mjs`):
-`(usdc, provider, target, deadline, reputationRegistry, resourceURI, maxParticipants, maxParticipantsCap)`.
+The `ResourcePool` constructor order matches `app/deploy-pool-circle.mjs`.
 
 ## 4. Circle products used
 
@@ -157,32 +162,13 @@ Funding and lifecycle calls are issued through Circle DCW contract execution
 | Finalize expired | `finalizeExpired(uint256)` | roundId |
 | Resale settlement | `aggregate((address,bytes)[])` | one `transferFrom(buyer, seller, amount)` per fill-plan output, wallet-asc |
 
-The pool also exposes `dropOut`, `settle`, `claimRefund`, `recordCompletions`,
-and `bindAgentId`; the single-argument v1 overloads forward to the current round.
+The pool also exposes `dropOut`, `settle`, `claimRefund`, and
+`recordCompletions`; the single-argument v1 overloads forward to the current round.
 The happy path needs no separate `settle` call: the commit that fills the target
 pays the provider inline and emits both `Settled(uint256)` and
 `Settled(uint256,uint256)`.
 
-## 6. Native ERC-8004 identity and reputation
-
-- Identity: `sdk/src/identity/` — `registerAgent(metadataURI)` (parses the
-  `Registered` event for the new `agentId`), `setAgentWallet` (EIP-712/1271
-  wallet binding), `resolveAgent` (`tokenURI` + `getAgentWallet`), and
-  `findAgentsByOwner` (a `balanceOf` fast path plus an indexed `Registered`
-  log scan from `IDENTITY_REGISTRY_FROM_BLOCK` because the public Arc RPC
-  prunes early history).
-- Reputation: `sdk/src/reputation/` — `getReputationSummary`
-  (`getSummary(uint256,address[],string,string)`, clients must be non-empty) and
-  `readFeedback(uint256,address,uint64)`. The demo resolution path reads both
-  and flags an unrevoked `dropout` tag with a negative value.
-- Pool → reputation: `contracts/src/ResourcePool.sol` writes objective outcomes
-  (`dropout = -1`, `completion = +1`) through `IPoolReputation.giveFeedback`
-  (`try/catch`, best-effort), covered by `contracts/test/ResourcePool.t.sol`.
-- ENS composition: `resolveEnsToAgents` chains the Sepolia subname to the Arc
-  wallet (`coinType 2152525650`) to `findAgentsByOwner` and per-agent
-  reputation — see `ENS.md` §7b for the load-bearing enforcement.
-
-## 7. Live verification
+## 6. Live verification
 
 - **Deploy receipt (Arc).** `ResourcePool` at `0x8b9f…F692`, deploy tx
   `0xb314…a279`, block `61221987`, from `0x78F3…A42a`
@@ -201,53 +187,45 @@ pays the provider inline and emits both `Settled(uint256)` and
 
 Re-query the subgraph and explorer at demo time; counts move as the pool does.
 
-## 8. Feature map
+## 7. Feature map
 
 | Feature | Status | Coalition usage |
 |---|---|---|
 | Arc testnet (chain 5042002) | USED | `ResourcePool`, USDC, native-USDC gas, dual-decimal handling in `sdk/src/chains/` |
 | Native USDC gas (18-dec native / 6-dec ERC-20) | USED | All on-chain amounts are `bigint` atomic; `toAtomicUsdc` / `fromAtomicUsdc` keep the 10¹² gap explicit |
-| ERC-8004 IdentityRegistry | USED (SDK reads; runtime registration available) | `registerAgent` / `resolveAgent` / `findAgentsByOwner` |
-| ERC-8004 ReputationRegistry | USED (reads + contract writer) | SDK reads gate the demo; the pool writes objective dropout/completion feedback |
 | Custom `ResourcePool` | USED (live) | `0x8b9f…F692` |
-| Circle Developer-Controlled Wallets | USED (live) | Agent funding, resale buyer, deployer, treasury source |
+| Circle Developer-Controlled Wallets (Circle Wallets product) | USED (live) | Agent funding, resale buyer, deployer, treasury source; counts as Circle Wallets evidence for §10/§11, distinct from Agent Stack below |
 | Circle App Kit | USED | Treasury `kit.send` re-funding rail |
 | Circle Contracts (SCP) | USED | `deploy-pool-circle.mjs` |
 | Circle Gateway / x402 | USED (server-side) | `POST /api/resale/quota` per-seller 402 + settlement id |
 | Multicall3 atomic resale | USED | `executeResaleBuy` aggregate settlement |
-| Circle Agent Stack *Agent Wallets* | NOT USED | The 2-of-2 MPC Agent Wallet path is documented in planning but not shipped; Developer-Controlled Wallets are the working custody path |
+| Circle Agent Stack *Agent Wallets* (2-of-2 MPC) | NOT USED | Documented in planning but not shipped; Developer-Controlled Wallets (Circle Wallets, above) are the working custody path instead |
+| Circle Nanopayments / Paymaster | NOT USED | The resale rail uses Circle Gateway + x402 for the quota leg, not the Nanopayments or Paymaster products by name |
 | Circle wallet policies | NOT USED | `wallet limit` is mainnet-only; pool-address checks and caps are enforced in the contract/SDK instead |
 | Agent Marketplace | NOT USED | Discovery runs through ENS + The Graph |
 | ERC-8183 escrow | NOT USED | Its 1:1:1 model cannot express N-way pooling; `ResourcePool` is the only custom escrow |
 
-## 9. Business narrative
+## 8. Business narrative
 
 Agent infrastructure is priced for a single user but used by many partial ones:
 an H100 at roughly $20/hr is wasted on one agent that consumes a fraction of it.
 Coalition lets a fleet of agents pool USDC on Arc toward one shared resource,
 settle atomically to the provider at the threshold, and refund everyone if the
 target is missed; an agent that drops out after committing forfeits its stake
-to the rest and takes an ERC-8004 reputation hit. Because equal payment is not
-equal usage, an outside agent can buy the spare capacity through the resale
-rail, compensating the most-overpaying participants until the pool's
-cost-to-compute ratios trend back toward 1:1. Arc supplies the settlement layer
-(gas in USDC, sub-second finality), Circle supplies agent-controlled USDC
-custody and App Kit movements, and ERC-8004 supplies portable identity and
-reputation — the pieces a multi-agent pooling protocol needs and should not
-rebuild.
+to the rest. Because equal payment is not equal usage, an outside agent can buy
+the spare capacity through the resale rail, compensating the most-overpaying
+participants until the pool's cost-to-compute ratios trend back toward 1:1. Arc
+supplies the settlement layer (gas in USDC, sub-second finality), and Circle
+supplies agent-controlled USDC custody and App Kit movements — the pieces a
+multi-agent pooling protocol needs and should not rebuild.
 
-## 10. Scope and limitations
+## 9. Scope and limitations
 
 - Agent funding uses **Circle Developer-Controlled Wallets**, not Circle Agent
   Stack Agent Wallets. The Agent Wallet path (2-of-2 MPC, `circle` CLI skills)
   is documented but was not shipped; do not present it as live.
 - Circle **wallet policies** are mainnet-only and are not used on testnet; the
   pool enforces contribution caps on-chain instead.
-- The ERC-8004 **objective-outcome loop** (dropout/completion → reputation) is
-  implemented in `ResourcePool` and Forge-tested, but no live dropout or
-  completion feedback transaction is recorded, and the live funding route
-  attests ENS without minting/binding an `agentId`. Treat the live ERC-8004
-  usage as reads plus an available writer, not as a proven live feedback write.
 - **No Arc pool funding/settle/resale transaction hashes are checked into the
   repo.** Live funding evidence lives in the subgraph's `Commitment` /
   `Settlement` entities (`GRAPH.md` §3); re-query the subgraph and explorer at
@@ -259,3 +237,45 @@ rebuild.
   config point at `0x8b9f…F692` (`.env.example`, subgraph manifest, deploy
   broadcast). Read `NEXT_PUBLIC_POOL_ADDRESS` from env as the source of truth.
 - The demo video and live demo URL are not yet published.
+
+## 10. Best DeFi/Onchain Finance Application — submission fit
+
+| # | Requirement | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Meaningful use of Arc and USDC | PASS | `ResourcePool` locks, settles, and refunds in USDC on Arc; gas paid in native USDC (§3) |
+| 2 | Advanced programmable money flows (conditional payments, onchain automation, multi-step settlement) | PASS | `ResourcePool` commit is threshold-conditional (settle inline on fill, refund on expiry, §5); resale is a Multicall3 atomic multi-leg USDC settlement (§4.5) |
+| 3 | Payment/liquidity/treasury workflows using App Kits where relevant | PASS | App Kit treasury re-funding rail, `kit.send` (§4.2) |
+| 4 | Circle Wallets / Circle Contracts as core products | PASS | Developer-Controlled Wallets drive funding and resale (§4.1); Circle Contracts deploys the pool (§4.3) |
+| 5 | Shows why stablecoin-native infra changes what's possible | PASS (narrative) | §8's pooling economics; frame for this track as shared-treasury infrastructure rather than agent-identity infrastructure |
+| 6 | Functional MVP + architecture diagram | PASS | `app/` + `orchestrator/` + `contracts/`; diagram in §2 |
+| 7 | Video demonstration + presentation | PENDING | Not yet published |
+| 8 | Public GitHub repo | PASS | https://github.com/Jashk120/Coalition |
+
+CCTP, Gateway (the two-way version, not just the resale quota leg), and
+StableFX are listed as core products for this track but are not currently
+used anywhere in the repo; the submission narrative should lean on
+ResourcePool + DCW + App Kit + Circle Contracts, not claim these three.
+
+## 11. Best Agentic Economy Application with Circle Agent Stack — submission fit
+
+| # | Requirement | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Agents with clear decision logic tied to real signals | PASS | Resale agent (agent-5) decides via `getPoolHealth` from the subgraph and fails closed to `skip` when that read is unavailable (`GRAPH.md` §10) |
+| 2 | Autonomous spending, payments, or settlement flows using USDC | PASS | `POST /api/agents/fund` drives DCW `approve` + `commit`; resale settles via the Multicall3 aggregate (§4.1, §4.5) |
+| 3 | Use of Agent Stack to connect agents to wallets, USDC payments, onchain actions | PARTIAL | Wallet custody is Circle Developer-Controlled Wallets — a **Circle Wallets** product, separately listed as a core product for this track — not the Circle **Agent Stack** 2-of-2 MPC Agent Wallet product specifically; that path is documented but not shipped (§7, §9) |
+| 4 | Use of Nanopayments, Paymaster, or App Kits for agent-to-agent/service payments | PARTIAL | App Kit is used for treasury re-funding (§4.2); the resale rail uses Circle Gateway + x402 for the quota leg, which is nanopayment-adjacent but is not the Nanopayments or Paymaster product by name |
+| 5 | Functional MVP + architecture diagram | PASS | Same evidence as §10 |
+| 6 | Video demonstration + presentation | PENDING | Not yet published |
+| 7 | Public GitHub repo | PASS | https://github.com/Jashk120/Coalition |
+
+Honest framing for this track specifically: the agent-to-agent economics are
+real and load-bearing — pooling, dropout forfeiture, and resale are all live or
+Forge-tested — and the wallet custody genuinely is Circle infrastructure
+(Developer-Controlled Wallets under Circle Wallets).
+What is not present is the Agent Stack-branded 2-of-2 MPC Agent Wallet
+product itself, which is the product this bounty is named after. A judge
+scoring strictly on "did you use Agent Stack" should mark item 3 partial; a
+judge scoring on "do agents transact using Circle-issued wallet
+infrastructure and USDC" should count DCW. Do not present the Agent Wallet
+path as shipped in the submission write-up — §9's existing caveat already
+says this and should carry over verbatim into this track's write-up.

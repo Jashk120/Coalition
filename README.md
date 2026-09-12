@@ -1,8 +1,10 @@
 # Coalition
 
-Lets autonomous agents pool USDC on Arc to jointly buy a shared resource none of them could afford alone, currently scoped around a shared VPS. The motivating case: an H100 running ~$20/hr is wasted on a single agent that only needs a fraction of it, so split the cost across hundreds of agents each needing a small slice, and it becomes viable for all of them. A smart contract locks each agent's commitment, settles atomically to the provider once the funding target's hit, and refunds everyone if it isn't. Agents who drop out after committing forfeit their stake to the rest of the pool, recorded on-chain via ERC-8004 so agents can check who's reliable to pool with.
+Lets autonomous agents pool USDC on Arc to jointly buy a shared resource none of them could afford alone, currently scoped around a shared VPS. The motivating case: an H100 running ~$20/hr is wasted on a single agent that only needs a fraction of it, so split the cost across hundreds of agents each needing a small slice, and it becomes viable for all of them. A smart contract locks each agent's commitment, settles atomically to the provider once the funding target's hit, and refunds everyone if it isn't. Agents who drop out after committing forfeit their stake to the rest of the pool.
 
 But equal payment doesn't mean equal usage — agent A might pay $2 for 1GB while agent B pays the same $2 for 100MB, leaving B's share underused relative to what it paid for. Rather than let that sit idle, any outside agent needing spare capacity (say 500MB) can tap into the pool without joining as a funding participant, paying the participants whose cost-to-compute ratio is most skewed first — the ones overpaying relative to their actual usage get compensated via x402 until the pool's ratios trend back toward 1:1.
+
+![Coalition pool architecture: agents 1–4 commit USDC to the shared ResourcePool, which settles to the provider or refunds on expiry; the orchestrator hands each funded agent its VPS slice, and resale buyers pay participants directly](assets/Agent-1.png)
 
 ## Agent identity — ENSv2 (load-bearing)
 
@@ -38,6 +40,50 @@ the verified query receipt, and the exact deploy command live in
 Honest scope: the subgraph is deployed to Subgraph Studio only (not published
 to the decentralized network), and there is no Substreams, MCP, or
 Graph-targeted x402 usage — see the feature map in `GRAPH.md`.
+
+## How a funding round works
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant App as App API
+    participant ENS as ENSv2 Resolver (Sepolia)
+    participant DCW as Circle DCW
+    participant Pool as ResourcePool (Arc)
+    participant Graph as Subgraph (The Graph)
+    participant Buyer as Resale buyer
+    participant MC as Multicall3
+
+    Op->>App: POST /api/agents/fund
+    App->>ENS: resolve agentN.agentpool.eth -> Arc wallet
+    ENS-->>App: ensWallet
+    App->>App: assert funderWallet == ensWallet
+
+    alt attestation fails
+        App-->>Op: step "failed" (no approve/commit)
+    else attestation passes
+        App->>DCW: approve(USDC, Pool, amount)
+        DCW->>Pool: approve confirmed
+        App->>DCW: commit(amount) / commit(roundId, amount)
+        DCW->>Pool: commit tx
+        Pool->>Pool: totalCommitted += amount
+        opt threshold reached
+            Pool->>Pool: pay provider inline
+            Pool-)Graph: emits Committed + Settled
+        end
+    end
+
+    Note over Graph: indexes Committed / Settled / DroppedOut / Refunded / CompletionRecorded
+
+    Buyer->>App: POST /api/resale/quota
+    App-->>Buyer: 402 PAYMENT-REQUIRED, or { settlementId } once paid
+    Buyer->>MC: approve(USDC, Multicall3, amount)
+    Buyer->>MC: aggregate(transferFrom legs to overpaying participants)
+    MC-->>Buyer: atomic settlement
+
+    App->>Graph: readRoster() / getPoolHealth() (subgraph-or-bust)
+    Graph-->>App: commitments, dropouts, pool state
+```
 
 ## Repository layout
 
