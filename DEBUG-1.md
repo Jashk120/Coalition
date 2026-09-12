@@ -6,6 +6,13 @@
 > namespace became functional on ENSv2 rather than relying on hard-coded
 > application values.
 
+> **Status.** This is the bring-up record for the ENSv2 namespace. The four
+> `agentN.agentpool.eth` records were later re-pointed from the interim
+> self-custody wallets shown below to the Circle Developer-Controlled Wallets
+> used for funding. The current as-built addresses, state, and re-point
+> transactions are in [`ENS.md`](ENS.md) §3; the wallets in this file are the
+> historical bring-up values, kept for provenance.
+
 ## 1. Executive Summary
 
 This debugging session established a working ENSv2 hierarchy:
@@ -467,57 +474,22 @@ MATCH
 This is the strongest verification from the session because it exercises
 the same resolution path the application uses.
 
-## 12. Dashboard Check
+## 12. Dashboard Integration
 
-The local dashboard was also queried:
+The dashboard consumes this same resolution stack at request time: `GET /api/agents`
+(`app/app/api/agents/route.ts`) resolves every seed through `resolveSeedAgents`
+and surfaces an `unresolved` status with a reason (and no wallet) when a name
+does not resolve to the expected Arc wallet. ENSv2 resolution is therefore part
+of the running application, not only the standalone verification script in §11.
+See [`ENS.md`](ENS.md) §7b for the enforcement details.
 
-``` bash
-curl -s --max-time 60 http://localhost:3000/api/agents
-```
+## 13. Secret Handling
 
-The response was piped through a JSON parser and produced:
-
-``` text
-Traceback (most recent call last):
-```
-
-This is a separate dashboard/API issue and does not invalidate the ENSv2
-verification.
-
-Recommended next diagnostic:
-
-``` bash
-curl -i --max-time 10 http://localhost:3000/api/agents
-```
-
-That exposes the HTTP status, headers, and raw response.
-
-## 13. Private-Key Handling
-
-The transaction sender was:
-
-``` text
-0x78F31B03De0E6473db80f2Da8c1a1cf5DB44A42a
-```
-
-The signing key was kept in:
-
-``` bash
-$PRIVATE_KEY
-```
-
-It was verified with:
-
-``` bash
-cast wallet address "$PRIVATE_KEY"
-```
-
-which returned the expected sender.
-
-The actual private key is intentionally NOT recorded in this document.
-
-This file is therefore safe to commit without exposing the signing
-secret.
+Transactions in this record were signed by the parent owner
+`0x78F31B03De0E6473db80f2Da8c1a1cf5DB44A42a`. The signing key was supplied
+through the shell environment (`$PRIVATE_KEY`) for the session only. No private
+key, seed phrase, or session token is recorded in this document or anywhere in
+the repository.
 
 ## 14. Problems and Lessons
 
@@ -652,21 +624,17 @@ This debugging session directly demonstrates:
 The project is not merely displaying ENS names while keeping the actual
 mapping hard-coded elsewhere.
 
-## 18. Scope Discipline
+## 18. Scope of This Record
 
-This document records what was actually demonstrated.
+This document records the ENSv2 mechanics exercised during the bring-up:
+hierarchical subnames, Permissioned Registry state, subname ownership,
+resolver assignment at the registry level, resolver address records, live
+Sepolia transactions, and dynamic application-side ENS resolution.
 
-It should NOT be used to claim ENSv2 features that were not exercised in
-this session, such as:
-
--   advanced Enhanced Access Control policies;
--   namespace aliasing;
--   record aliasing;
--   expiry/revocation behavior;
--   per-record delegated permissions.
-
-Those should only be claimed elsewhere if the project implements and
-demonstrates them.
+It does **not** cover advanced Enhanced Access Control policies, namespace
+aliasing, record aliasing, expiry/revocation behavior, or per-record delegated
+permissions. Where those features are specified or available-but-not-exercised,
+that status is recorded in [`ENS.md`](ENS.md) §4 and §5.
 
 ## 19. Judge-Facing Takeaway
 

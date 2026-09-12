@@ -7,7 +7,8 @@ subgraph when the endpoint is set. Live verified 2026-09-11 against the
 Studio dev endpoint: `_meta.hasIndexingErrors = false`, one `Pool` entity,
 47 commitments, 0 dropouts. The subgraph is deployed to Subgraph Studio only;
 it has NOT been published to the decentralized network. No Substreams, MCP,
-A2A, or Graph-targeted x402 usage exists (§8). No demo video exists yet.
+A2A, or Graph-targeted x402 usage exists (§8). The demo video is not yet
+published.
 
 Coalition enters the Start Fresh (Net-new) build pool: git history begins
 2026-09-04 and runs to 2026-09-11.
@@ -23,10 +24,7 @@ Track: "Best AI Tooling or AI Use Case with The Graph (From Scratch)", $5,000.
 | 3 | App consumes the subgraph (AI tooling or AI use case) | PASS on app reads and agent reasoning | `readPoolState` is subgraph-first, `readRoster` is subgraph-or-bust, `discoverPools` scans the subgraph (§6); the autonomous agent-5 path (`POST /api/agents/resale-run`) decides from `getPoolHealth`, fail-closed (§10). Only the dashboard demo loop (`POST /api/agents/run`) still decides from on-chain reads |
 | 4 | Central, not cosmetic | PASS | `readRoster()` throws `"subgraph roster unavailable: SUBGRAPH_ENDPOINT is not configured"` when unset; no silent fallback exists on that path (`app/lib/pool-state.ts`) |
 | 5 | Reproducible deployment receipt | PASS | Manifest, mapping, dependency, endpoint, IPFS hash, and exact deploy command in §2; Studio page + query endpoint listed |
-| 6 | Video demo | FAIL | No video exists; the roster path (no fallback) is the recommended proof beat |
-
-Do not claim a decentralized-network publication, a video, or agent-over-subgraph
-reasoning until §8 and §10 say otherwise.
+| 6 | Video demo | PENDING | Not yet published; the roster path (no fallback) is the recommended proof beat |
 
 ## 2. Deployment facts
 
@@ -211,14 +209,15 @@ so that URL does not exist for it today.
 |---|---|---|
 | Subgraphs (Studio) | USED | `coalition-resource-pool` (ID `1760135`, `v0.0.1`, IPFS `Qmahg6CnFDDhW4J86iSsoxKXsGfzprXY2mkN8AFgnvAqh4`); six handlers on `arc-testnet` (§2, §4) |
 | Subgraph queries in app + SDK | USED (load-bearing) | `getPoolFill` / `getCommitments` / `getDropouts` + `listSubgraphPools`; `readRoster` has no fallback (§5, §6) |
-| Subgraph MCP | NOT USED | No MCP server, no `get_schema_by_deployment_id` / `execute_query_by_deployment_id` calls; `plans/subgraph.md` §5 sketched the wiring but it was never built |
+| Subgraph MCP | NOT USED | No MCP server, no `get_schema_by_deployment_id` / `execute_query_by_deployment_id` calls; an MCP wiring was sketched during planning but was never built |
 | Substreams | NOT USED | None exists |
 | x402 (for Graph queries) | NOT USED | The project's x402 flow is Circle Gateway compute-quota payment, not payment for Graph queries; no x402 is involved in any subgraph read |
 | A2A | NOT USED | No A2A integration exists |
 | Decentralized-network publication | NOT DONE | Studio-only deployment; the gateway URL pattern is documented in §7 but does not resolve for this subgraph |
 
-Do not claim any Substreams, MCP, A2A, or Graph-targeted x402 usage. Do not
-claim publication to the decentralized network.
+Substreams, MCP, A2A, and Graph-targeted x402 are not implemented, and the
+subgraph is not published to the decentralized network; the entry scores on the
+from-scratch Studio subgraph plus its load-bearing app reads.
 
 ## 9. Defects found and fixed during deployment
 
@@ -237,7 +236,7 @@ Regression tests added (`sdk/test/graph.test.ts`):
 - "filters by pool only when no wallet is given": asserts the outgoing query contains no `wallet: $wallet` filter and variables are exactly `{ pool }`.
 - "filters by wallet when one is given": asserts the wallet-filtered document and `{ pool, wallet }` variables are used.
 
-## 10. Honest limitations (do not overclaim)
+## 10. Scope and limitations
 
 - The subgraph is NOT published to the decentralized network. The Studio dev
   endpoint is for testing and is rate-limited (about 3,000 queries/day).

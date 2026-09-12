@@ -81,6 +81,16 @@ npm run dev --prefix app
 
 See [`sdk/README.md`](sdk/README.md) for SDK-specific details.
 
+## Submission receipts
+
+ETHOnline 2026 partner-slot receipts for this submission:
+
+- [`ARC.md`](ARC.md) — Arc slot (Circle DeFi + Circle Agentic Economy)
+- [`GRAPH.md`](GRAPH.md) — The Graph (AI Tooling / AI Use Case, Start Fresh)
+- [`ENS.md`](ENS.md) — ENSv2
+
+[`DEBUG-1.md`](DEBUG-1.md) records the ENSv2 identity bring-up debugging trail.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).

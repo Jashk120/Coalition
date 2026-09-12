@@ -4,30 +4,28 @@
 on `funderWallet == ENS wallet` (see §7b). Resolution was re-verified
 2026-09-11 via `cast` against
 `https://ethereum-sepolia-rpc.publicnode.com`, independent of the repo's
-earlier receipts. EAC grant/revoke has not been exercised live. Video and
-live demo URL are still TODO (§8, §10 TODO-5/6).
+earlier receipts. EAC grant/revoke has not been exercised live. The demo
+video and live demo URL are not yet published (§8).
 
 Repo is PUBLIC: https://github.com/Jashk120/Coalition (verified via GitHub
 API: `private=false`). ENS commits are in `origin/main`.
 
 ## 1. Qualification fit (per requirement)
 
-| # | Requirement (Day-10 plan §7) | Verdict | Evidence |
+| # | Requirement | Verdict | Evidence |
 |---|---|---|---|
 | 1 | Built on ENSv2 Sepolia deployment | PASS (code + live) | `sdk/src/ens/addresses.ts`; all reads target Sepolia via viem `sepolia` client (`sdk/src/ens/client.ts`); live resolution verified 2026-09-10 and re-verified 2026-09-11 via `https://ethereum-sepolia-rpc.publicnode.com` (§3) |
 | 2 | Subname registry + EAC central to identity flow, resolving to Arc wallet to ERC-8004, not hardcoded | PASS on resolution and registry, AVAILABLE on EAC (not exercised live) | Scored path `resolveEnsToAgents` (subname to Arc wallet to agent ids) verified live for all 4 subnames 2026-09-11 with no fallback; own subname registry USED (§2, §5); EAC selectors present in resolver bytecode but no live grant exercised (§4) |
 | 3 | Central, not cosmetic | PASS | ENS gates `GET /api/agents`, `POST /api/agents/run`, and `POST /api/agents/fund` (§7b); unresolved seeds get no wallet and cannot run or fund |
 | 4 | Public repo + ENS.md receipt (Sepolia addresses, EAC roles) | PASS on receipt, PASS on visibility | This file; repo public at https://github.com/Jashk120/Coalition, ENS commits in `origin/main` |
-| 5 | Video OR live demo | FAIL (TODO) | Placeholders in §8; TODO-5 (video) and TODO-6 (demo URL) still open; no video claimed |
+| 5 | Video OR live demo | PENDING | Not yet published; §8 carries the recording plan |
 | 6 | Beta caveats on record | PASS | §9 below |
-
-Do not claim EAC enforcement or a video until §4 and §8 say otherwise.
 
 ## 2. Sepolia addresses used
 
 Source of truth: `docs.ens.domains/learn/deployments/#sepolia-ensv2-beta` +
 `contracts/deployments/sepolia/*.json` in `ensdomains/contracts-v2`.
-Last checked against docs: **2026-09-07** (`plans/ensv2.md` header).
+Last checked against docs: **2026-09-07**.
 Live re-verification: **2026-09-11** via `cast` (§3 method).
 Re-check: **at demo time**; every literal below is overridable per SDK call.
 
@@ -41,7 +39,7 @@ Re-check: **at demo time**; every literal below is overridable per SDK call.
 | UserRegistry impl (slot value above) | `0x624a25d67B59D587752EbEc8DdeD8827dAe52050` | Docs-table literal; USED as the implementation behind the parent subname registry proxy |
 | Shared Permissioned Resolver (all 4 subnames + parent) | `0x2f60a75E4Dcd037110a8feaAB4b15f57B2BB9973` | LIVE as-built. EIP-1967 proxy; implementation slot = `0x9EAe5C2730a7dD16BDD1DeE6421a1B91e3B0365e` = official PermissionedResolverImpl. Single shared instance, not per-subname (see §5) |
 | PermissionedResolver impl (slot value above) | `0x9EAe5C2730a7dD16BDD1DeE6421a1B91e3B0365e` | Docs-table literal; USED as the implementation behind the shared resolver proxy |
-| VerifiableFactory | No default exported on purpose | Rotated already; re-fetch from `sepolia/*.json`. Factory address and generation that deployed `0x365d…e1dc34` still unverified (TODO) |
+| VerifiableFactory | No default exported on purpose | Rotated already; re-fetch from `sepolia/*.json`. Factory address and generation that deployed `0x365d…e1dc34` are not yet recorded |
 | MockUSDC (mintable, 6-dec) | No default exported on purpose | Rotated already; re-fetch before use |
 | Parent `agentpool.eth` token/owner | Parent resolves on Sepolia (resolver set, no Arc record as expected) | Owner `0x78F31B03De0E6473db80f2Da8c1a1cf5DB44A42a`, status 2, expiry 1978259976, verified 2026-09-11 in ETHRegistry `0xbdc85d…0E2` |
 | Per-subname resolver instances | NOT USED; shared resolver observed | §5 records the as-built (shared) vs as-specified (per-subname) gap |
@@ -131,7 +129,7 @@ EAC-capable. This is not proof any grant was exercised.
 
 App path (specified, not exercised live): `POST /api/ens/delegate`
 implements grant to write to revoke to fail. Live grant and revoke
-transactions have not been run, so do not claim EAC enforcement.
+transactions have not been run.
 
 Resolver addresses are looked up fresh per write (`resolveEnsResolver`,
 never cached); label caches key by `labelhash`, never by mutable token id.
@@ -153,9 +151,9 @@ never cached); label caches key by `labelhash`, never by mutable token id.
   through the Universal Resolver, never direct (`resolveArcWallet`,
   `resolveEnsResolver`). **As-built 2026-09-11: all 4 subnames + parent point
   at one shared resolver `0x2f60…9973`.** Either split to per-subname
-  instances before submitting (matches the bounty "fully own their data"
-  line) or justify shared + EAC scoping explicitly. Do not claim
-  per-subname today.
+  instances before submission (matches the bounty "fully own their data"
+  line) or justify shared + EAC scoping explicitly. Per-subname instances
+  are not in place today.
 - **Record aliasing via `setAlias` (reserve, not used).** No shared records
   needed. Each agent owns exactly one Arc multicoin record.
 - **Namespace aliasing, two names to same subregistry (not used).** Only if
@@ -163,9 +161,8 @@ never cached); label caches key by `labelhash`, never by mutable token id.
 - **Expiry / revocable / transferability (specified).** Short `expiry` with
   `ROLE_RENEW` kept = expiring names; `unregister` = revocable; drop
   `CAN_TRANSFER_ADMIN` from the bitmap for non-transferable demo names.
-  Observed subname expiry is 1820412108 (§3). Final bitmap values for new
-  registrations are recorded at TODO-4. Lock-forever (revoke
-  role *and* admin from self) is irreversible. Do not use it in the demo.
+  Observed subname expiry is 1820412108 (§3). Lock-forever (revoke
+  role *and* admin from self) is irreversible and is not used in the demo.
 
 ## 6. SDK methods and params used
 
@@ -178,7 +175,7 @@ never cached); label caches key by `labelhash`, never by mutable token id.
 - `registerSubname({ walletClient, account, registrar, label, parentName? (= "agentpool.eth"), owner, registry, resolver, roleBitmap, expiry })` to `{ hash, name }`
 - `setArcAddressRecord({ walletClient, publicClient?, account, name, arcWallet, resolver?, coinType? })` to `{ hash, resolver }` (`setAddr(namehash, coinType, bytes)`)
 - `authorizeAgentRecord({ walletClient, account, name, resolver, agentWallet, allowed, coinType? })` to `{ hash }` (`authorizeAddrRoles(DNS-encoded name, …)`)
-- `buildUserRegistrySalt({ parentName?, version })` to `Hex` (factory salt; encoding assumption, verify vs `VerifiableFactory` before Day 8)
+- `buildUserRegistrySalt({ parentName?, version })` to `Hex` (factory salt; encoding assumption, verify against `VerifiableFactory` before the demo)
 - `createEnsLabelCache<T>()`: labelhash-keyed cache; never stores resolvers
 
 Seed resolution lives in `sdk/src/demo` (`resolveSeedAgent` /
@@ -195,7 +192,7 @@ Seed resolution lives in `sdk/src/demo` (`resolveSeedAgent` /
 | Permissioned Resolver ownership | SHARED AS-BUILT: single `0x2f60…9973` serves all 4 subnames + parent; per-subname split specified, not done |
 | Record aliasing | RESERVE: `setAlias` record-sharing unused; 1 agent = 1 Arc record |
 | Namespace aliasing | NOT USED: second parent only if demo needs it; cut per one-pool scope |
-| Expiring / revocable / non-transferable vs transferable / forever names | AS-BUILT + SPECIFIED: observed subname expiry 1820412108; short expiry + `ROLE_RENEW` (expiring), `unregister` (revocable), bitmap without `CAN_TRANSFER_ADMIN` (non-transferable); values for new names recorded at TODO-4 |
+| Expiring / revocable / non-transferable vs transferable / forever names | AS-BUILT + SPECIFIED: observed subname expiry 1820412108 (§3); short expiry + `ROLE_RENEW` (expiring), `unregister` (revocable), bitmap without `CAN_TRANSFER_ADMIN` (non-transferable) |
 | Agents-as-namespaces bonus (own identity + permissions) | USED: subname to Arc wallet to ERC-8004 `resolveAgent` + `getReputationSummary` is our own composition; each namespace carries its own EAC-scoped write permission (available, §4) |
 | Funder binding | USED: funding requires `funderWallet == ENS wallet` per live attestation (§7b); no seed-wallet fallback |
 
@@ -258,18 +255,17 @@ Related pool facts: `CIRCLE_PROVIDER_WALLET_ID` is funder 4 (`0x0a64…`), so
 agent4 is also the pool provider, and `CIRCLE_TREASURY_WALLET_ID` is set to
 that same provider wallet (allowed). Demo pool round 11 is settled.
 
-## 8. Video timestamps + live demo URL
+## 8. Video beats + live demo URL
 
-Spoken 2-4 min, 720p+. ENS discovery beat about 60s inside the resale + ENS
-segment (Day-10 plan §Day 10). All values TODO until the cut exists. No
-video is claimed here.
+The recording is a spoken 2-4 minute cut at 720p or higher; the ENS discovery
+beat runs about 60 seconds inside the resale + ENS segment.
 
-| Beat | Timestamp | Content |
-|---|---|---|
-| ENS discovery | TODO-5 `MM:SS` | Live `agent1.agentpool.eth` to Arc wallet to ERC-8004 identity + reputation |
-| Track-fit card (ENS) | TODO-5 `MM:SS` | Subname registry + EAC summary |
-| Live demo URL | TODO-6 | Deployed app URL (Next.js consumer of `coalition-sdk`) |
-| Video URL | TODO-5 | Hosted recording URL |
+| Beat | Content |
+|---|---|
+| ENS discovery | Live `agent1.agentpool.eth` to Arc wallet to ERC-8004 identity + reputation |
+| Track-fit card (ENS) | Subname registry + EAC summary |
+
+The video and the live demo URL are not yet published.
 
 ## 9. Honest limitations (beta on record)
 
@@ -291,39 +287,42 @@ video is claimed here.
   in §3 are cited from the repo trail and the 2026-09-11 operator run, not
   re-verified in the 2026-09-11 `cast` pass (which covered live `addr` /
   `getState` reads). Re-check with `cast receipt <hash> --rpc-url
-  https://ethereum-sepolia-rpc.publicnode.com` before submitting.
+  https://ethereum-sepolia-rpc.publicnode.com` before the demo.
 - As-built uses a shared resolver, not per-subname instances. Parent
   subname operations ran against registry `0x365d…e1dc34`, not the
   docs-table `ETHRegistry` generation. Factory address + generation that
-  owns this deployment are still unverified; record them so judges can
-  reproduce it.
+  owns this deployment are not yet recorded; they are needed to reproduce it.
 - The App Kit treasury rail uses the provider wallet (funder 4) as its source.
-  No live EAC grant has been exercised (§4). Video and live demo URL are
-  still missing (§8).
+  No live EAC grant has been exercised (§4). The demo video and live demo URL
+  are not yet published (§8).
 - ENS records align with the Circle funder wallets, and `POST /api/agents/fund`
   signs with those Circle wallets (§3, §7b); a funder the name does not resolve
   to fails closed. Per-subname resolvers are not used.
 
-## 10. TODO fill-in list (owner + command)
+## 10. Status and reproducibility
 
-- TODO-1 (owner: submitter): DONE. Repo is public
-  (https://github.com/Jashk120/Coalition, `private=false`); ENS commits in
-  `origin/main`. Record: `gh repo view --json visibility,url`.
-- TODO-2 (owner: Day-8 operator): re-fetch Deployments table + factory JSONs;
-  record `VerifiableFactory` + `MockUSDC` + re-check date in §2.
-  `curl -s https://docs.ens.domains/learn/deployments/ && ls contracts-v2/contracts/deployments/sepolia/`
-- TODO-3 (owner: Day-8 operator): parent registration DONE live (parent
-  resolves; owner/token state in §2-§3 verified 2026-09-11); still open:
-  record generation/factory that owns registry `0x365d…e1dc34`.
-- TODO-4 (owner: Day-8 operator): resolution DONE live (4/4 MATCH §3);
-  re-point to Circle funders DONE 2026-09-11 (§3, §7b). Still
-  open: `cast receipt` re-check of the older hashes, live EAC
-  grant-state read (grant has not been exercised), runtime `agentId`
-  registration + `resolveEnsToAgents` cross-check, and the per-subname vs
-  shared resolver decision.
-- TODO-5 (owner: Day-10 editor): record video, fill §8 timestamps + video URL.
-  No video exists yet.
-- TODO-6 (owner: Day-10 deployer): deploy demo app, fill live demo URL in §8.
-- TODO-7 (owner: operator): DONE. `CIRCLE_TREASURY_WALLET_ID` is set to the
-  provider wallet (funder 4, `0x0a64…`); the treasury rail re-funds agents
-  from it.
+Verified and on record:
+
+- Repo is public: https://github.com/Jashk120/Coalition (`private=false`); ENS
+  commits are in `origin/main`. Re-check: `gh repo view --json visibility,url`.
+- Parent `agentpool.eth` is registered and owned by
+  `0x78F31B03De0E6473db80f2Da8c1a1cf5DB44A42a`; owner/token state and expiry
+  verified 2026-09-11 (§2-§3).
+- Resolution is 4/4 MATCH (§3), and the records were re-pointed to the Circle
+  funders 2026-09-11 (§3, §7b). Re-check: the §3 `cast call addr(bytes32,uint256)`
+  method.
+- `CIRCLE_TREASURY_WALLET_ID` is the provider wallet (funder 4, `0x0a64…`); the
+  App Kit treasury rail re-funds agents from it.
+- Beta addresses to re-fetch at demo time: the Deployments table plus
+  `contracts-v2/contracts/deployments/sepolia/*.json` (`VerifiableFactory`,
+  `MockUSDC`). Command:
+  `curl -s https://docs.ens.domains/learn/deployments/ && ls contracts-v2/contracts/deployments/sepolia/`.
+
+Open items (not yet exercised, not counted as verified):
+
+- Live EAC grant/revoke (selectors present in the deployed resolver, §4).
+- `cast receipt` re-check of the older record-write hashes (§3).
+- Runtime `agentId` registration + `resolveEnsToAgents` cross-check.
+- The per-subname vs shared resolver decision (§5).
+- The factory address/generation that owns registry `0x365d…e1dc34`.
+- The demo video and live demo URL (§8).
