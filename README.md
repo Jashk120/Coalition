@@ -131,6 +131,7 @@ See [`sdk/README.md`](sdk/README.md) for SDK-specific details.
 
 ETHOnline 2026 partner-slot receipts for this submission:
 
+- [Pitch deck (Canva)](https://canva.link/pguvbvd2ia4z9br)
 - [`ARC.md`](ARC.md) — Arc slot (Circle DeFi + Circle Agentic Economy)
 - [`GRAPH.md`](GRAPH.md) — The Graph (AI Tooling / AI Use Case, Start Fresh)
 - [`ENS.md`](ENS.md) — ENSv2
