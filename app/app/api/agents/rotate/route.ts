@@ -47,7 +47,23 @@ function appKey(): string | undefined {
  * `startRound` is provider-only: CIRCLE_PROVIDER_WALLET_ID must be the
  * pool's provider wallet. Missing env yields 503, never a throw.
  */
+let rotationPending = false;
+
 export async function POST(req: Request): Promise<NextResponse<RotateResponse>> {
+  if (rotationPending) {
+    return NextResponse.json({ ok: false, error: "A round rotation is already in progress. Refresh and retry when it completes." }, { status: 409 });
+  }
+  rotationPending = true;
+  try {
+    return await rotate(req);
+  } catch (error) {
+    return NextResponse.json({ ok: false, error: errorMessage(error) }, { status: 500 });
+  } finally {
+    rotationPending = false;
+  }
+}
+
+async function rotate(req: Request): Promise<NextResponse<RotateResponse>> {
   const env = readCircleEnv();
   if (!env.ok) {
     return NextResponse.json({ ok: false, error: env.error }, { status: 503 });
@@ -105,6 +121,15 @@ export async function POST(req: Request): Promise<NextResponse<RotateResponse>> 
 
   const round = await readCurrentRound();
   const closedRoundId = round.view.roundId;
+  if (round.source !== "chain") {
+    return NextResponse.json({ ok: false, error: "Cannot verify the current round on-chain. Retry when the RPC is available." }, { status: 503 });
+  }
+  if (requested["expectedRoundId"] !== undefined && requested["expectedRoundId"] !== closedRoundId) {
+    return NextResponse.json({ ok: false, error: "The current round has changed. Refresh before retrying." }, { status: 409 });
+  }
+  if (requested["expiredOnly"] === true && (!round.view.expired || round.view.settled)) {
+    return NextResponse.json({ ok: false, error: "The round is no longer expired and unfilled. Refresh before retrying." }, { status: 409 });
+  }
   if (closedRoundId === "0") {
     return NextResponse.json(
       { ok: false, error: "Pool has no rounds (v1 contract): deploy the v2 pool first." },

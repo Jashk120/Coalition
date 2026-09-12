@@ -80,6 +80,17 @@ wallets (`CIRCLE_TREASURY_FUND_USDC` sets the default per-recipient amount).
 
 ## Routes
 
+The dashboard automatically rotates an expired, unfilled round when its
+10-second state poll observes expiry. It finalizes the old round, opens the
+next through the provider wallet, and refreshes the funding and capacity
+panels. Funding and reset controls pause during rotation; failures show a
+retry button. Funding also rechecks expiry on click. Settled rounds still use
+the explicit reset control. Automatic recovery runs while the dashboard is
+open and requires `CIRCLE_PROVIDER_WALLET_ID` and the Circle credentials.
+
+Run rotation regression checks without credentials or transactions:
+`node --test app/test/rotate.test.mjs` from the repository root.
+
 - `/` — agents table, pool-fill progress, trigger button, decision log,
   on-chain activity, usage/budget + terms panels, outside-buyer panel.
 - `GET /api/agents` — live `resolveSeedAgents` (seed order; unresolved entries

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { DEFAULT_IDENTITY_REGISTRY } from "@jx-nexus/coalition";
 import { EXPLORER_URL, OUTSIDE_BUYER, SEED_META } from "@/lib/constants";
@@ -180,6 +180,9 @@ export default function DashboardPage() {
   > | null>(null);
   const [agentsError, setAgentsError] = useState<string | null>(null);
   const [funding, setFunding] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const rotationInFlight = useRef<Promise<boolean> | null>(null);
+  const attemptedExpiredRound = useRef<string | null>(null);
   const [fundError, setFundError] = useState<string | null>(null);
   const [fundSteps, setFundSteps] = useState<readonly FundStep[]>([]);
   const [rotateError, setRotateError] = useState<string | null>(null);
@@ -389,10 +392,59 @@ export default function DashboardPage() {
     }
   }, [plan, loadUsage, loadMarket]);
 
+  const recoverExpiredRound = useCallback((round: RoundView): Promise<boolean> => {
+    if (rotationInFlight.current !== null) return rotationInFlight.current;
+    attemptedExpiredRound.current = round.roundId;
+    setRotating(true);
+    setRotateError(null);
+    const pending = (async () => {
+      try {
+        const response = await fetch("/api/agents/rotate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ expectedRoundId: round.roundId, expiredOnly: true }),
+          cache: "no-store",
+        });
+        const body = (await parseJson(response)) as RotateResponse;
+        if (!body.ok) throw new Error(body.error);
+        setRotateResult(body.result);
+        setFundSteps([]);
+        setPlan({ status: "idle" });
+        setBuy({ status: "idle" });
+        await Promise.all([loadAgents(), loadUsage(), loadMarket()]);
+        return true;
+      } catch (error) {
+        setRotateError(error instanceof Error ? error.message : String(error));
+        return false;
+      } finally {
+        setRotating(false);
+        rotationInFlight.current = null;
+      }
+    })();
+    rotationInFlight.current = pending;
+    return pending;
+  }, [loadAgents, loadUsage, loadMarket]);
+
+  // Polling notices expiry even when the dashboard is left open. Attempt
+  // once per round; a failure stays visible and can be retried explicitly.
+  useEffect(() => {
+    const round = agents?.round;
+    if (!round || round.roundId === "0" || !round.expired || round.settled || funding || freeing) return;
+    if (attemptedExpiredRound.current === round.roundId) return;
+    void recoverExpiredRound(round);
+  }, [agents, funding, freeing, recoverExpiredRound]);
+
   const fundDemo = useCallback(async () => {
     setFunding(true);
     setFundError(null);
     try {
+      // Recheck on click: the displayed snapshot can expire between polls.
+      const stateResponse = await fetch("/api/agents", { cache: "no-store" });
+      const state = (await parseJson(stateResponse)) as AgentsResponse;
+      if (!state.ok) throw new Error(state.error);
+      if (state.round?.expired && !state.round.settled) {
+        if (!(await recoverExpiredRound(state.round))) return;
+      }
       const response = await fetch("/api/agents/fund", {
         method: "POST",
         cache: "no-store",
@@ -411,7 +463,7 @@ export default function DashboardPage() {
     } finally {
       setFunding(false);
     }
-  }, [loadAgents, loadUsage, loadMarket]);
+  }, [loadAgents, loadUsage, loadMarket, recoverExpiredRound]);
 
   useEffect(() => {
     void loadAgents();
@@ -746,9 +798,9 @@ export default function DashboardPage() {
             className="btn btn-primary"
             type="button"
             onClick={() => void fundDemo()}
-            disabled={funding}
+            disabled={funding || rotating || freeing}
           >
-            {funding ? "Funding…" : "Fund shared server"}
+            {rotating ? "Starting new round…" : funding ? "Funding…" : "Fund shared server"}
           </button>
         </div>
         {fundError !== null ? (
@@ -776,7 +828,7 @@ export default function DashboardPage() {
             className="btn btn-danger"
             type="button"
             onClick={() => void freePool()}
-            disabled={freeing}
+            disabled={freeing || rotating || funding}
           >
             {freeing ? "Freeing…" : "Free Pool"}
           </button>
@@ -790,9 +842,18 @@ export default function DashboardPage() {
         {freeResult !== null ? (
           <div className="state">Pool freed: {freeResult}</div>
         ) : null}
+        {rotating ? (
+          <div className="state" role="status">The round expired. Finalizing it and opening a new funding round…</div>
+        ) : null}
         {rotateError !== null ? (
           <div className="state state-error" role="alert">
             Rotate failed: {rotateError}
+            {agents?.round?.expired && !agents.round.settled ? (
+              <button className="btn" type="button" disabled={rotating || funding || freeing}
+                onClick={() => { if (agents.round) void recoverExpiredRound(agents.round); }}>
+                Retry new round
+              </button>
+            ) : null}
           </div>
         ) : null}
         {rotateResult !== null ? (
