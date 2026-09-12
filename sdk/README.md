@@ -1,5 +1,7 @@
 # Coalition SDK
 
+[![npm version](https://img.shields.io/npm/v/@jx-nexus/coalition.svg)](https://www.npmjs.com/package/@jx-nexus/coalition)
+
 TypeScript client for Coalition's Arc-testnet pool, ENSv2 identity, and
 indexed-state surfaces. The dashboard consumes this package directly, so the
 demo and integration API share the same protocol logic. See the repository

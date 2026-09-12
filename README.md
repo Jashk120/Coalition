@@ -108,8 +108,9 @@ sequenceDiagram
 
 ## Repository layout
 
-- `sdk/` — the `@jx-nexus/coalition` TypeScript package
-  (`chains/`, `ens/`, `identity/`, `reputation/`, `pool/`, plus `test/`)
+- `sdk/` — the [`@jx-nexus/coalition`](https://www.npmjs.com/package/@jx-nexus/coalition)
+  TypeScript package (`chains/`, `ens/`, `identity/`, `reputation/`, `pool/`,
+  plus `test/`)
 - `app/` — Next.js dashboard for the 4-agent pool flow (dogfoods the SDK via
   `file:../sdk`; reads plus headless on-chain funding through
   `POST /api/agents/fund`, no browser-initiated writes)
