@@ -1,7 +1,13 @@
 # Coalition contracts
 
-Foundry project for the `ResourcePool` contract (round-scoped USDC pooling
-on Arc testnet). Solidity `0.8.30`, optimizer on.
+Foundry project for `ResourcePool`, the on-chain core of Coalition. It is a
+round-scoped USDC pool on Arc testnet: a threshold-filling commit settles to
+the provider inline; an unfilled expired round preserves individual refund
+claims; and a dropout's stake stays in the round for the remaining agents.
+See the repository [judge guide](../JUDGES.md) for how this component connects
+to identity, resource enforcement, and resale.
+
+Solidity `0.8.30`, optimizer on.
 
 ## Layout
 

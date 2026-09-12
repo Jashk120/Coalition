@@ -1,5 +1,9 @@
 # GRAPH.md: Best AI Tooling or AI Use Case with The Graph (From Scratch) submission receipt
 
+> **Judge orientation:** [JUDGES.md](JUDGES.md) explains where this index fits
+> in Coalition. This receipt records the deployed Studio subgraph, the
+> code-level consumers, query evidence, and its explicit limitations.
+
 **Overall: The Graph is load-bearing, not cosmetic.** Pool funding views read
 the subgraph first (`readPoolState`), the roster path (`readRoster`) is
 subgraph-or-bust with no chain fallback, and pool discovery scans the

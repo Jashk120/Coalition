@@ -1,5 +1,10 @@
 # DEBUG-1 --- ENSv2 Agent Namespace Resolution on Sepolia
 
+> **Historical record:** this is a detailed ENSv2 bring-up log, not the
+> current judge entry point. Read [JUDGES.md](JUDGES.md) for the project
+> overview and [ENS.md](ENS.md) for current wallet mappings, evidence, and
+> limitations.
+
 > Project: AgentPool / ENSv2 agent identity namespace\
 > Network: Ethereum Sepolia\
 > Purpose: Preserve the complete debugging trail showing how the agent

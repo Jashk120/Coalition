@@ -1,5 +1,9 @@
 # ARC.md: Circle DeFi + Circle Agentic Economy submission receipt
 
+> **Judge orientation:** [JUDGES.md](JUDGES.md) gives the short system story
+> and code-first evaluation route. This document is the Arc/Circle evidence
+> record: deployment facts, product usage, reproducibility, and limitations.
+
 **Overall: Arc is load-bearing, not cosmetic.** Coalition settles its N-agent
 pooling contract (`ResourcePool`) on Arc testnet, moves USDC through Circle
 Developer-Controlled Wallets, settles a resale buy as one atomic Multicall3 USDC

@@ -1,6 +1,10 @@
 # Coalition SDK
 
-TypeScript client for the Coalition pooling protocol on Arc testnet.
+TypeScript client for Coalition's Arc-testnet pool, ENSv2 identity, and
+indexed-state surfaces. The dashboard consumes this package directly, so the
+demo and integration API share the same protocol logic. See the repository
+[judge guide](../JUDGES.md) for the larger system story.
+
 Requires Node.js 22 or later.
 
 ```sh

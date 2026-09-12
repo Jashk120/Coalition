@@ -1,7 +1,10 @@
 # Coalition ResourcePool Subgraph
 
-Subgraph Studio subgraph indexing the Coalition `ResourcePool` on Arc
-testnet (chain `5042002`, RPC `https://rpc.testnet.arc.network`).
+Subgraph Studio index for Coalition's `ResourcePool` on Arc testnet (chain
+`5042002`, RPC `https://rpc.testnet.arc.network`). It is not merely a
+dashboard convenience: roster reads are subgraph-only and the autonomous
+resale path skips a purchase when indexed pool health is unavailable. See the
+repository [judge guide](../JUDGES.md) for the full evidence map.
 
 - Pool: `0x8b9f38c7B005Dd67203e27240F45335a9e64F692`
 - Pool state at scaffold time: target 10 USDC (`10000000` atomic, 6-dec),

@@ -1,5 +1,9 @@
 # ENS.md: Best Use of ENSv2 submission receipt
 
+> **Judge orientation:** [JUDGES.md](JUDGES.md) explains the full system. This
+> document is the current source of truth for ENSv2 identity, wallet
+> attestation, live verification, reproducibility, and beta caveats.
+
 **Overall: ENS is central and load-bearing.** Funding is gated
 on `funderWallet == ENS wallet` (see §7b). Resolution was re-verified
 2026-09-11 via `cast` against

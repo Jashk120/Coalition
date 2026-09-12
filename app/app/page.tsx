@@ -203,7 +203,6 @@ export default function DashboardPage() {
   const [walletNames, setWalletNames] = useState<ReadonlyMap<string, string>>(
     new Map(),
   );
-  const [railOpen, setRailOpen] = useState(false);
 
   const displayAgent = (address: string): ReactNode => {
     const name =
@@ -532,13 +531,8 @@ export default function DashboardPage() {
     }
   }, [loadAgents, loadUsage, loadMarket]);
 
-  // Resale shows whenever someone actually holds spare: an empty market
-  // (no allocations, or fully-used slices) has nothing to sell, so the
-  // section stays hidden instead of showing no-quota rows and a plan form
-  // that can only 409. No settled requirement — the orchestrator settles
-  // quota pre-settle too; only the funding endpoints close. A market
-  // backend error stays visible so failures are diagnosable. Market polling
-  // continues while hidden so the section appears as soon as spare lands.
+  // Keep the resale stage visible; show purchase controls only when capacity
+  // is available, or an error needs to be surfaced. Polling remains active.
   const resaleLive =
     market.status === "error" ||
     (market.status === "ready" &&
@@ -604,43 +598,147 @@ export default function DashboardPage() {
                 Coalition <span className="brand-accent">— Pool Dashboard</span>
               </h1>
               <p className="brand-subtitle">
-                4-agent funding demo on Arc 5042002 · compute streams every
-                1s · pool + market every 10s
+                Shared compute for autonomous agents · Arc testnet
               </p>
             </div>
           </div>
-          <button
-            className="btn btn-secondary rail-toggle"
-            type="button"
-            onClick={() => setRailOpen((open) => !open)}
-            aria-expanded={railOpen}
-            aria-controls="demo-rail"
-          >
-            {railOpen ? "Hide demo controls" : "Demo controls"}
-          </button>
           <ThemeToggle />
         </div>
       </header>
       <main>
         <div className="app-shell">
-          <aside
-            className={railOpen ? "rail rail-open" : "rail"}
-            id="demo-rail"
-            aria-label="Demo controls for judges"
-          >
-            <span className="rail-badge">Demo · for judges</span>
-            <div className="rail-body">
+          <div className="main-canvas">
+            <section className="story-intro" aria-labelledby="story-title">
+              <span className="story-eyebrow">THE COALITION DEMO</span>
+              <h2 id="story-title">Buy together. Use your share.<br />Sell what’s spare.</h2>
+              <p>Four agents pool USDC to fund one shared server. A fifth buys spare capacity, paying the original participants.</p>
+              <nav className="story-steps" aria-label="Demo stages">
+                <a href="#fund-together"><span>01</span><strong>Fund together</strong><small>Combine budgets to pay the provider</small></a>
+                <a href="#use-compute"><span>02</span><strong>Use compute</strong><small>See each agent’s allocation and usage</small></a>
+                <a href="#sell-capacity"><span>03</span><strong>Sell spare capacity</strong><small>Preview who gets paid and what the buyer gets</small></a>
+              </nav>
+            </section>
+
+            <ul className="kpi-strip" aria-label="Key metrics">
+              <li className="kpi">
+                <div className="kpi-label">Pool fill</div>
+                <div className="kpi-value num">
+                  {agentsError !== null
+                    ? "—"
+                    : poolFillPct === null
+                      ? "…"
+                      : `${poolFillPct}%`}
+                </div>
+                <div className="kpi-sub">
+                  {poolView === null
+                    ? "Loading pool state…"
+                    : `${formatUsdc(poolView.committed)} / ${formatUsdc(poolView.target)} USDC`}
+                </div>
+              </li>
+              <li className="kpi">
+                <div className="kpi-label">Participants</div>
+                <div className="kpi-value num">
+                  {agentsError !== null
+                    ? "—"
+                    : poolView === null
+                      ? "…"
+                      : poolView.participants}
+                </div>
+                <div className="kpi-sub">
+                  {poolView?.roundId !== undefined && poolView.roundId !== null
+                    ? `Round ${poolView.roundId}`
+                    : "Across all rounds"}
+                </div>
+              </li>
+              <li className="kpi">
+                <div className="kpi-label">Round status</div>
+                <div className="kpi-value">
+                  {agentsError !== null
+                    ? "Unavailable"
+                    : poolView === null
+                      ? "…"
+                      : poolView.status}
+                </div>
+              </li>
+              <li className="kpi">
+                <div className="kpi-label">Live compute burn</div>
+                <div className="kpi-value num">
+                  {liveCuTotals === null ? "…" : formatUsage(liveCuTotals.used)}
+                </div>
+                <div className="kpi-sub">
+                  {usage.status === "ready"
+                    ? `of ${formatUsage(liveCuTotals?.budget ?? 0)} CU-s budget · ${usage.agents.length} agent(s) · trailing ${usage.windowHours}h`
+                    : usage.status === "error"
+                      ? `Usage unavailable: ${usage.message}`
+                      : "Loading live usage…"}
+                </div>
+              </li>
+            </ul>
+
+            <section className="card" id="fund-together" aria-label="Fund together">
+        <span className="story-eyebrow">01 / FUND TOGETHER</span>
+        <h2>One server. A shared budget.</h2>
+        <p className="card-lede">The final contribution pays the provider. An unfilled, expired round retains a refund path.</p>
+        {agentsError !== null ? (
+          <div className="state state-error" role="alert">
+            Pool state unavailable: {agentsError}
+          </div>
+        ) : poolView === null ? (
+          <div className="state">Loading pool state…</div>
+        ) : (
+          <>
+            <div className="pool-status">
+              {poolView.roundId !== undefined ? (
+                <>
+                  <span className="pill pill-ok">
+                    Round {poolView.roundId}
+                  </span>{" "}
+                  <span className="pill">{poolView.status}</span>
+                </>
+              ) : (
+                <span className="pill">{poolView.status}</span>
+              )}
+              <span className="pool-source">source: {poolView.source}</span>
+            </div>
+            <details><summary>Inspect pool contract</summary><a className="mono" href={`${EXPLORER_URL}/address/${poolView.poolAddress}`} target="_blank" rel="noreferrer">{poolView.poolAddress}</a></details>
+            <div className="fill-track" aria-hidden="true">
+              <div
+                className="fill-bar"
+                style={{
+                  width: `${String(fillPercent(poolView.committed, poolView.target))}%`,
+                }}
+              />
+            </div>
+            <div className="pool-detail">
+              <span>
+                <strong className="num">
+                  {formatUsdc(poolView.committed)} / {formatUsdc(poolView.target)}
+                </strong>{" "}
+                USDC
+              </span>
+              <span>
+                <strong className="num">{poolView.participants}</strong>{" "}
+                participant(s)
+              </span>
+            </div>
+            {poolView.note !== undefined ? (
+              <div className="state">Degraded read: {poolView.note}</div>
+            ) : null}
+          </>
+        )}
+      </section>
+
               <section className="card" aria-label="Demo controls">
-        <h2>Demo controls</h2>
+        <h2>Fund the shared server</h2>
         <p className="card-lede">
-          Run the 4-agent on-chain funding loop, then inspect each step below.
+          Verify the four agent identities, contribute USDC, then request their compute allocations.
         </p>
         <details>
           <summary>How it works</summary>
           <div className="details-body">
             Runs the 4 agents sequentially: live round gate, then real USDC
             approve+commit per Circle wallet. Each step appends in the pool
-            controls card with on-chain hashes.
+            funding progress card with transaction links.
           </div>
         </details>
         <div className="card-actions">
@@ -650,7 +748,7 @@ export default function DashboardPage() {
             onClick={() => void fundDemo()}
             disabled={funding}
           >
-            {funding ? "Funding…" : "Fund on-chain"}
+            {funding ? "Funding…" : "Fund shared server"}
           </button>
         </div>
         {fundError !== null ? (
@@ -658,126 +756,13 @@ export default function DashboardPage() {
             Fund failed: {fundError}
           </div>
         ) : null}
-        <p className="fill-label" title="Held out of the funding loop; prices spare capacity via quotes and never commits.">
-          Outside buyer — held out of the funding loop, prices spare capacity
-          via quotes, never commits.
-        </p>
-        <div className="mono">{OUTSIDE_BUYER.wallet}</div>
-        <div className="mono">{OUTSIDE_BUYER.ensName}</div>
       </section>
-
-      {resaleLive ? (
-      <section className="card card-trade" aria-label="Resale market">
-        <h2>Resale market</h2>
-        <p className="card-lede">
-          Preview a fill plan for spare capacity, then settle it in one atomic payment.
-        </p>
-        <details>
-          <summary>How it works</summary>
-          <div className="details-body">
-            Unallocated pool headroom, split skew-weighted across the 4
-            agents. Agent-5 (outside buyer) previews a fill plan, then pays
-            every share in one atomic settlement from its own Circle wallet —
-            either all agents are paid or none are. After the buy the buyer
-            lands in Live Compute Usage like the other agents.
-          </div>
-        </details>
-        {market.status === "error" ? (
-          <div className="state state-error" role="alert">
-            Market unavailable: {market.message}
-          </div>
-        ) : null}
-        <p
-          className="fill-label"
-          title="Set wanted memory and compute, preview the fill plan, then pay it in one settlement."
-        >
-          Want mem (MB) + CU, preview the fill plan, then pay it in one
-          settlement.
-        </p>
-        <div className="card-actions">
-          <label className="field">
-            mem MB{" "}
-            <input
-              value={wantMem}
-              onChange={(event) => setWantMem(event.target.value)}
-              inputMode="numeric"
-              aria-label="Wanted memory in MB"
-            />
-          </label>{" "}
-          <label className="field">
-            CU{" "}
-            <input
-              value={wantCu}
-              onChange={(event) => setWantCu(event.target.value)}
-              inputMode="decimal"
-              aria-label="Wanted compute units"
-            />
-          </label>{" "}
-          <button
-            className="btn btn-secondary"
-            type="button"
-            onClick={() => void previewPlan()}
-            disabled={plan.status === "loading" || buy.status === "paying"}
-          >
-            {plan.status === "loading" ? "Planning…" : "Preview plan"}
-          </button>{" "}
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() => void payPlan()}
-            disabled={plan.status !== "ready" || buy.status === "paying"}
-          >
-            {buy.status === "paying" ? "Paying…" : "Pay plan"}
-          </button>
-        </div>
-        {plan.status === "error" ? (
-          <div className="state state-error" role="alert">
-            Plan failed: {plan.message}
-          </div>
-        ) : null}
-        {plan.status === "ready" ? (
-          <div className="plan">
-            <div className="fill-label">Pool headroom {plan.plan.headroomMB} MB / {plan.plan.headroomCUMicro} CU-micro · round {plan.plan.roundId}</div>
-            <ul className="plan-list">
-              {plan.plan.outputs.map((output) => (
-                <li className="plan-row" key={output.account}>
-                  <span className="plan-agent mono">{displayAgent(output.account)}</span>
-                  <span className="plan-meta">
-                    <span className="plan-share hint">{sharePercent(output.amountAtomic, plan.plan.totalAtomic)}%</span>
-                    <span className="plan-amount mono num">{formatUsdc(output.amountAtomic)} USDC</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <div className="fill-label">Total {formatUsdc(plan.plan.totalAtomic)} USDC across {plan.plan.outputs.length} agent(s)</div>
-          </div>
-        ) : null}
-        {buy.status === "error" ? (
-          <div className="state state-error" role="alert">
-            Buy failed: {buy.message}
-          </div>
-        ) : null}
-        {buy.status === "ready" ? (
-          <div className="state">
-            Bought {buy.result.legsPaid} payout(s) for{" "}
-            {formatUsdc(buy.result.totalAtomic)} USDC — buyer{" "}
-            <span className="mono">{displayAgent(buy.result.buyer)}</span>{" "}
-            holds quota (see Live Compute Usage).
-            {buy.result.toToken !== undefined ? (
-              <div className="mono">token {buy.result.toToken}</div>
-            ) : null}
-          </div>
-        ) : null}
-      </section>
-      ) : null}
-
       <section className="card" aria-label="Pool controls and funding results">
-        <h2>Pool controls + funding results</h2>
+        <h2>Funding progress</h2>
         <p className="card-lede">
-          Reset the demo loop in one click, then review the last funding run.
+          Payment and compute allocation are separate steps. Inspect each agent’s transaction and allocation result below.
         </p>
-        <details>
-          <summary>How it works</summary>
+        <details className="operator-tools"><summary>Operator tools · reset demo</summary>
           <div className="details-body">
             Free pool resets the whole demo loop in one click: containers
             are revoked, the finished round is closed, and a fresh round
@@ -786,7 +771,6 @@ export default function DashboardPage() {
             fundable). Steps from the last Fund on-chain run need CIRCLE_*
             server env.
           </div>
-        </details>
         <div className="card-actions">
           <button
             className="btn btn-danger"
@@ -797,6 +781,7 @@ export default function DashboardPage() {
             {freeing ? "Freeing…" : "Free Pool"}
           </button>
         </div>
+        </details>
         {freeError !== null ? (
           <div className="state state-error" role="alert">
             Free pool failed: {freeError}
@@ -837,7 +822,7 @@ export default function DashboardPage() {
           </div>
         ) : null}
         {fundSteps.length === 0 ? (
-          <div className="state">No funded steps</div>
+          <div className="state">No funding run yet. Use “Fund shared server” to begin.</div>
         ) : (
           <div className="table-wrap">
             <table>
@@ -926,120 +911,12 @@ export default function DashboardPage() {
           </div>
         )}
               </section>
-            </div>
-          </aside>
-          <div className="main-canvas">
-            <ul className="kpi-strip" aria-label="Key metrics">
-              <li className="kpi">
-                <div className="kpi-label">Pool fill</div>
-                <div className="kpi-value num">
-                  {agentsError !== null
-                    ? "—"
-                    : poolFillPct === null
-                      ? "…"
-                      : `${poolFillPct}%`}
-                </div>
-                <div className="kpi-sub">
-                  {poolView === null
-                    ? "Loading pool state…"
-                    : `${formatUsdc(poolView.committed)} / ${formatUsdc(poolView.target)} USDC`}
-                </div>
-              </li>
-              <li className="kpi">
-                <div className="kpi-label">Participants</div>
-                <div className="kpi-value num">
-                  {agentsError !== null
-                    ? "—"
-                    : poolView === null
-                      ? "…"
-                      : poolView.participants}
-                </div>
-                <div className="kpi-sub">
-                  {poolView?.roundId !== undefined && poolView.roundId !== null
-                    ? `Round ${poolView.roundId}`
-                    : "Across all rounds"}
-                </div>
-              </li>
-              <li className="kpi">
-                <div className="kpi-label">Round status</div>
-                <div className="kpi-value">
-                  {agentsError !== null
-                    ? "Unavailable"
-                    : poolView === null
-                      ? "…"
-                      : poolView.status}
-                </div>
-              </li>
-              <li className="kpi">
-                <div className="kpi-label">Live compute burn</div>
-                <div className="kpi-value num">
-                  {liveCuTotals === null ? "…" : formatUsage(liveCuTotals.used)}
-                </div>
-                <div className="kpi-sub">
-                  {usage.status === "ready"
-                    ? `of ${formatUsage(liveCuTotals?.budget ?? 0)} CU-s budget · ${usage.agents.length} agent(s) · trailing ${usage.windowHours}h`
-                    : usage.status === "error"
-                      ? `Usage unavailable: ${usage.message}`
-                      : "Loading live usage…"}
-                </div>
-              </li>
-            </ul>
 
-            <section className="card" aria-label="Pool">
-        <h2>Pool</h2>
-        {agentsError !== null ? (
-          <div className="state state-error" role="alert">
-            Pool state unavailable: {agentsError}
-          </div>
-        ) : poolView === null ? (
-          <div className="state">Loading pool state…</div>
-        ) : (
-          <>
-            <div className="pool-status">
-              {poolView.roundId !== undefined ? (
-                <>
-                  <span className="pill pill-ok">
-                    Round {poolView.roundId}
-                  </span>{" "}
-                  <span className="pill">{poolView.status}</span>
-                </>
-              ) : (
-                <span className="pill">{poolView.status}</span>
-              )}
-              <span className="pool-source">source: {poolView.source}</span>
-            </div>
-            <div className="mono">{poolView.poolAddress}</div>
-            <div className="fill-track" aria-hidden="true">
-              <div
-                className="fill-bar"
-                style={{
-                  width: `${String(fillPercent(poolView.committed, poolView.target))}%`,
-                }}
-              />
-            </div>
-            <div className="pool-detail">
-              <span>
-                <strong className="num">
-                  {formatUsdc(poolView.committed)} / {formatUsdc(poolView.target)}
-                </strong>{" "}
-                USDC
-              </span>
-              <span>
-                <strong className="num">{poolView.participants}</strong>{" "}
-                participant(s)
-              </span>
-            </div>
-            {poolView.note !== undefined ? (
-              <div className="state">Degraded read: {poolView.note}</div>
-            ) : null}
-          </>
-        )}
-      </section>
-
-      <section className="card card-centerpiece" aria-label="Live compute usage">
-        <h2>Live Compute Usage</h2>
+      <section className="card card-centerpiece" id="use-compute" aria-label="Live compute usage">
+        <span className="story-eyebrow">02 / USE COMPUTE</span>
+        <h2>Each agent gets a share</h2>
         <p className="card-lede">
-          Settled agents burn compute on their own — bars climb live.
+          Compare allocated compute with live usage. Payment alone does not confirm a running container.
         </p>
         {usage.status === "loading" ? (
           <div className="state">Loading live usage…</div>
@@ -1049,7 +926,7 @@ export default function DashboardPage() {
           </div>
         ) : usage.agents.length === 0 ? (
           <div className="state">
-            No usage yet — containers appear after settle → allocate.
+            No allocations reported yet. Fund the server, then check the allocation results above.
           </div>
         ) : (
           <>
@@ -1059,7 +936,7 @@ export default function DashboardPage() {
               </span>{" "}
               <span
                 className="fill-label"
-                title="Settled agents burn compute on their own — bars climb live."
+                title="Compare allocated compute with live usage. Payment alone does not confirm a running container."
               >
                 {usage.agents.length} agent(s) · trailing {usage.windowHours}h
                 · live every 1s
@@ -1165,6 +1042,114 @@ export default function DashboardPage() {
         )}
       </section>
 
+      <div id="sell-capacity">
+      {resaleLive ? (
+      <section className="card card-trade" aria-label="Resale market">
+        <span className="story-eyebrow">03 / SELL SPARE CAPACITY</span>
+        <h2>Agent 5 buys the spare capacity</h2>
+        <p className="card-lede">
+          Preview a fill plan for spare capacity, then settle it in one atomic payment.
+        </p>
+        <details>
+          <summary>How it works</summary>
+          <div className="details-body">
+            Unallocated pool headroom, split skew-weighted across the 4
+            agents. Agent-5 (outside buyer) previews a fill plan, then pays
+            every share in one atomic settlement from its own Circle wallet —
+            either all agents are paid or none are. After the buy the buyer
+            lands in the compute section like the other agents.
+          </div>
+        </details>
+        {market.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Market unavailable: {market.message}
+          </div>
+        ) : null}
+        <p
+          className="fill-label"
+          title="Set wanted memory and compute, preview the fill plan, then pay it in one settlement."
+        >
+          Choose the capacity agent 5 needs. Preview the recipients and USDC amounts before buying.
+        </p>
+        <div className="card-actions">
+          <label className="field">
+            Memory (MB){" "}
+            <input
+              value={wantMem}
+              onChange={(event) => setWantMem(event.target.value)}
+              inputMode="numeric"
+              aria-label="Wanted memory in MB"
+            />
+          </label>{" "}
+          <label className="field">
+            Compute units (CU){" "}
+            <input
+              value={wantCu}
+              onChange={(event) => setWantCu(event.target.value)}
+              inputMode="decimal"
+              aria-label="Wanted compute units"
+            />
+          </label>{" "}
+          <button
+            className="btn btn-secondary"
+            type="button"
+            onClick={() => void previewPlan()}
+            disabled={plan.status === "loading" || buy.status === "paying"}
+          >
+            {plan.status === "loading" ? "Planning…" : "Preview purchase"}
+          </button>{" "}
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() => void payPlan()}
+            disabled={plan.status !== "ready" || buy.status === "paying"}
+          >
+            {buy.status === "paying" ? "Paying…" : "Buy spare capacity"}
+          </button>
+        </div>
+        {plan.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Plan failed: {plan.message}
+          </div>
+        ) : null}
+        {plan.status === "ready" ? (
+          <div className="plan">
+            <div className="fill-label">Pool headroom {plan.plan.headroomMB} MB / {plan.plan.headroomCUMicro} CU-micro · round {plan.plan.roundId}</div>
+            <ul className="plan-list">
+              {plan.plan.outputs.map((output) => (
+                <li className="plan-row" key={output.account}>
+                  <span className="plan-agent mono">{displayAgent(output.account)}</span>
+                  <span className="plan-meta">
+                    <span className="plan-share hint">{sharePercent(output.amountAtomic, plan.plan.totalAtomic)}%</span>
+                    <span className="plan-amount mono num">{formatUsdc(output.amountAtomic)} USDC</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div className="fill-label">Buyer pays {formatUsdc(plan.plan.totalAtomic)} USDC across {plan.plan.outputs.length} agent(s)</div>
+          </div>
+        ) : null}
+        {buy.status === "error" ? (
+          <div className="state state-error" role="alert">
+            Buy failed: {buy.message}
+          </div>
+        ) : null}
+        {buy.status === "ready" ? (
+          <div className="state">
+            Bought {buy.result.legsPaid} payout(s) for{" "}
+            {formatUsdc(buy.result.totalAtomic)} USDC — buyer{" "}
+            <span className="mono">{displayAgent(buy.result.buyer)}</span>{" "}
+            holds quota (see the compute section).
+            {buy.result.toToken !== undefined ? (
+              <div className="mono">token {buy.result.toToken}</div>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+        ) : (<section className="card"><span className="story-eyebrow">03 / SELL SPARE CAPACITY</span><h2>Make room for agent 5</h2><p className="card-lede">An outside buyer pays participants for spare capacity.</p><div className="state">{market.status === "loading" ? "Checking available capacity…" : "No spare capacity is currently available. This stage opens when the market reports capacity for sale."}</div></section>)}
+      </div>
+
+      <details className="card evidence-panel"><summary>Inspect evidence · history, agent identities and pool terms</summary>
       <section className="card" aria-label="Round history">
         <h2>Round history</h2>
         {agentsError !== null ? (
@@ -1227,9 +1212,9 @@ export default function DashboardPage() {
       </section>
 
       <section className="identity-stack" aria-label="Identity">
-        <section className="card" aria-label="Seed agents">
-          <h2>Seed agents</h2>
-          <p className="card-lede">The 4 deterministic funding members.</p>
+        <section className="card" aria-label="Pool participants">
+          <h2>Pool participants</h2>
+          <p className="card-lede">The four configured agents and their resolved wallet identities.</p>
         {agentsError !== null ? (
           <div className="state state-error" role="alert">
             Resolution unavailable: {agentsError}
@@ -1396,6 +1381,7 @@ export default function DashboardPage() {
             </details>
         )}
             </section>
+          </details>
           </div>
         </div>
       </main>

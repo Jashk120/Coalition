@@ -1,9 +1,18 @@
 # Coalition app
 
+This is the judge-facing control plane for the Coalition lifecycle: it shows
+agent identity, pool progress, funded usage, and the outside-buyer resale
+flow. Read the repository [judge guide](../JUDGES.md) first for the complete
+story and evaluation path.
+
 Next.js + TypeScript dashboard for the deterministic 4-agent pool flow.
 It dogfoods the published `@jx-nexus/coalition` surface (local `file:../sdk`
 dependency) — no SDK logic is copied into `app/`, and the UI performs no
 on-chain writes.
+
+**What to look for:** `POST /api/agents/fund` makes ENS attestation a hard
+gate before Circle-wallet funding; `POST /api/resale/buy` makes the buyer's
+multi-recipient payout one Multicall3 transaction before minting quota.
 
 ## Dev commands (all run inside `app/`)
 
@@ -181,3 +190,15 @@ dependencies): `agents.run.start/complete/decision`, `agents.resolve` (+
 `terms.*`. Only public demo fields (counts, addresses, decisions,
 durations) — never tokens, keys, or session material. Slow steps log at
 `warn` automatically via `logTimed`.
+
+## Guided dashboard
+
+The dashboard follows three stages: **Fund together → Use compute → Sell
+spare capacity**. Stage links jump to the relevant section. Funding actions
+and per-agent results appear in the main flow; resale stays visible with an
+explanation when no capacity is available. Payment and compute allocation
+remain separate outcomes.
+
+Expand **Inspect evidence** for round history, participant identities,
+namespaces, and pool terms. **Operator tools · reset demo** contains the
+existing reset action. Merely navigating the stages does not submit payments.

@@ -1,10 +1,31 @@
 # Coalition
 
-Lets autonomous agents pool USDC on Arc to jointly buy a shared resource none of them could afford alone, currently scoped around a shared VPS. The motivating case: an H100 running ~$20/hr is wasted on a single agent that only needs a fraction of it, so split the cost across hundreds of agents each needing a small slice, and it becomes viable for all of them. A smart contract locks each agent's commitment, settles atomically to the provider once the funding target's hit, and refunds everyone if it isn't. Agents who drop out after committing forfeit their stake to the rest of the pool.
+**Shared infrastructure for autonomous agents.** Coalition lets agents pool
+USDC on Arc to buy a resource together, starting with a shared VPS. The pool
+settles atomically to the provider at its funding target; if it expires
+unfilled, participants retain a refund path. The orchestrator then gives each
+funded agent an enforceable resource slice.
 
-But equal payment doesn't mean equal usage — agent A might pay $2 for 1GB while agent B pays the same $2 for 100MB, leaving B's share underused relative to what it paid for. Rather than let that sit idle, any outside agent needing spare capacity (say 500MB) can tap into the pool without joining as a funding participant, paying the participants whose cost-to-compute ratio is most skewed first — the ones overpaying relative to their actual usage get compensated via x402 until the pool's ratios trend back toward 1:1.
+Unused capacity does not go to waste. An outside buyer can purchase a spare
+slice and settle one atomic USDC payment that compensates participants who
+have contributed more than their actual usage warrants. This turns a one-off
+group purchase into a small, fair capacity market.
+
+> **Evaluating the project?** Start with the five-minute
+> [judge guide](JUDGES.md). It links each claim to the code and the relevant
+> live-evidence receipt.
 
 ![Coalition pool architecture: agents 1–4 commit USDC to the shared ResourcePool, which settles to the provider or refunds on expiry; the orchestrator hands each funded agent its VPS slice, and resale buyers pay participants directly](assets/Agent-1.png)
+
+## Why the integrations matter
+
+| Layer | Role in Coalition |
+|---|---|
+| ENSv2 | Resolves each agent name to its Arc wallet and blocks funding if the wallet does not match. |
+| Circle + Arc | Circle Developer-Controlled Wallets fund a USDC pool deployed on Arc; Circle App Kit handles treasury top-ups. |
+| ResourcePool | Holds the round rules: threshold settlement, expiry refunds, dropout treatment, and round isolation. |
+| The Graph | Indexes the pool roster and feeds the autonomous resale health check. |
+| Orchestrator | Enforces paid CPU/memory quotas and creates the resale payment plan. |
 
 ## Agent identity — ENSv2 (load-bearing)
 

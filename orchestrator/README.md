@@ -1,8 +1,12 @@
 # Coalition orchestrator
 
-Go service enforcing paid resource limits on the shared VPS via Docker. It
-serves the resale-market endpoints and generates the pool terms document live
-from its own config. Stdlib only — no third-party dependencies.
+Go service that makes Coalition's on-chain purchase useful off-chain. It
+enforces each paid CPU/memory slice on the shared VPS via Docker, exposes the
+capacity market, and generates the pool terms from its live configuration.
+The pool contract moves funds; this service enforces the resource those funds
+buy. See the repository [judge guide](../JUDGES.md) for the end-to-end flow.
+
+Stdlib only — no third-party dependencies.
 
 ## Run
 
