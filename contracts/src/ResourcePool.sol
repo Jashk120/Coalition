@@ -271,7 +271,7 @@ contract ResourcePool {
 
         if (totalAfter >= r.target) {
             r.settled = true;
-            uint256 balance = usdc.balanceOf(address(this));
+            uint256 balance = r.totalCommitted;
             if (!usdc.transfer(provider, balance)) revert TransferFailed();
             emit Settled(balance);
             emit Settled(roundId, balance);
@@ -363,7 +363,7 @@ contract ResourcePool {
         if (r.totalCommitted < r.target) revert NotFilled(r.totalCommitted, r.target);
         r.settled = true;
 
-        uint256 balance = usdc.balanceOf(address(this));
+        uint256 balance = r.totalCommitted;
         if (!usdc.transfer(provider, balance)) revert TransferFailed();
         emit Settled(balance);
         emit Settled(roundId, balance);
@@ -431,7 +431,7 @@ contract ResourcePool {
         if (r.totalCommitted >= r.target) revert AlreadyFilled(r.totalCommitted, r.target);
         r.expiredFinalized = true;
 
-        uint256 balance = usdc.balanceOf(address(this));
+        uint256 balance = r.totalCommitted;
         uint256 activeTotal = r.totalCommitted - r.forfeitedTotal;
         if (activeTotal == 0) {
             if (balance > 0) {

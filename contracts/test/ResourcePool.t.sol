@@ -686,6 +686,61 @@ contract ResourcePoolTest is Test {
         assertEq(usdc.balanceOf(address(pool)), 4_000_000 + 5_000_000);
     }
 
+    /// @dev Regression: a later round's inline settle must pay the provider only
+    /// that round's own committed funds, never an earlier round's unclaimed refunds.
+    function test_roundIsolation_LaterSettleCannotSweepPriorRefunds() public {
+        _commit(alice, 4_000_000);
+        _commit(bob, 2_000_000);
+        vm.warp(deadline + 1);
+        pool.finalizeExpired(1);
+        vm.prank(bob);
+        pool.claimRefund(1); // bob out; alice's 4_000_000 stays parked
+
+        vm.prank(provider);
+        pool.startRound(TARGET, 1 hours, 10);
+
+        uint256 providerBefore = usdc.balanceOf(provider);
+        _commitR(carol, 2, TARGET); // fills and settles inline
+
+        assertEq(usdc.balanceOf(provider) - providerBefore, TARGET, "provider paid only round-2 target");
+        assertEq(usdc.balanceOf(address(pool)), 4_000_000, "round-1 refund stays parked");
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        pool.claimRefund(1);
+        assertEq(usdc.balanceOf(alice) - aliceBefore, 4_000_000, "round-1 refund intact");
+        assertEq(usdc.balanceOf(address(pool)), 0, "no stranded funds");
+    }
+
+    /// @dev Regression: a later round's expiry snapshot must be sized by its own
+    /// committed total, so its final claimant cannot drain a prior parked refund.
+    function test_roundIsolation_LaterExpiryCannotDrainPriorRefunds() public {
+        _commit(alice, 4_000_000);
+        _commit(bob, 2_000_000);
+        vm.warp(deadline + 1);
+        pool.finalizeExpired(1);
+        vm.prank(bob);
+        pool.claimRefund(1); // pool still holds alice's 4_000_000
+
+        vm.prank(provider);
+        pool.startRound(TARGET, 1 hours, 10);
+        _commitR(carol, 2, 5_000_000); // round 2 stays unfilled
+
+        vm.warp(block.timestamp + 1 hours + 1);
+        pool.finalizeExpired(2);
+
+        uint256 carolBefore = usdc.balanceOf(carol);
+        vm.prank(carol);
+        pool.claimRefund(2);
+        assertEq(usdc.balanceOf(carol) - carolBefore, 5_000_000, "carol refund is round-2 only");
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        pool.claimRefund(1);
+        assertEq(usdc.balanceOf(alice) - aliceBefore, 4_000_000, "round-1 refund intact");
+        assertEq(usdc.balanceOf(address(pool)), 0, "no stranded funds");
+    }
+
     function test_expiredRoundThenNextRoundStarts() public {
         _commit(alice, 1_000_000);
         vm.warp(deadline + 1);
