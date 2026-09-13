@@ -33,9 +33,9 @@ subgraph endpoint/API key are server-only and stay in route handlers.
 when both point at the same pool, otherwise the dashboard funds one round
 while the orchestrator tracks another. `ARC_RPC_URL` should be a private
 endpoint when available: the public `rpc.testnet.arc.io` free tier 429s
-under the combined polling load (dashboard agents state every 10s, activity
-every 15s, orchestrator usage every 1s, plus the orchestrator settle poller
-at `POLL_INTERVAL` 5s).
+under the combined polling load (dashboard agents state every 10s,
+orchestrator usage every 1s, plus the orchestrator settle poller at
+`POLL_INTERVAL` 5s).
 
 Agent funding is Circle Developer-Controlled Wallets only. There is no
 self-custody path: `app/lib/seed-keys.ts`, `~/.coalition/seed-keys.json`,
@@ -92,15 +92,16 @@ Run rotation regression checks without credentials or transactions:
 `node --test app/test/rotate.test.mjs` from the repository root.
 
 - `/` — agents table, pool-fill progress, trigger button, decision log,
-  on-chain activity, usage/budget + terms panels, outside-buyer panel.
+  usage/budget + terms panels, outside-buyer panel.
 - `GET /api/agents` — live `resolveSeedAgents` (seed order; unresolved entries
   carry a reason, no fallback wallet) plus pool state (subgraph first, chain
   `getPoolState` fallback).
 - `POST /api/agents/run` — sequential dry-run decisions gated by
   `wouldExceedTarget`; returns `AgentDecision` lines with null hashes.
 - `POST /api/agents/fund` — headless on-chain funding via Circle
-  Developer-Controlled Wallets (parallel USDC approves, strictly sequential
-  pool commits sharing one remainder snapshot, last commit auto-settles);
+  Developer-Controlled Wallets (parallel USDC approves; one remainder
+  snapshot split across wallets, then concurrent commits whose last landing
+  auto-settles the round; a second concurrent run is rejected with 409);
   returns `FundStep` lines with on-chain hashes, 503 without `CIRCLE_*` env.
   ENS is **mandatory**: before any approve/commit it resolves each funder's
   `agentN.agentpool.eth` Arc record and requires
@@ -153,14 +154,19 @@ Run rotation regression checks without credentials or transactions:
 Phase 1 gates every wallet against one live round snapshot in seed order
 (splitting the remainder across the wallets still to run, capped at the
 standard share). Phase 2 fires all USDC approves in parallel via
-`Promise.all`. Phase 3 commits strictly sequentially in seed order: commits
-share the round remainder and the filling one settles inline, so they must
-not race. Each commit round-trips Circle `getTransaction` at 1s plus jitter
+`Promise.all`. Phase 3 also runs concurrently — one commit-and-provision
+task per wallet via `Promise.all` — because the wallet set is disjoint and
+Phase 1 already split the remainder so the amounts sum to at most the target;
+the commit that lands last settles the round inline, so no commit ordering is
+required. Each Circle call round-trips `getTransaction` at 500ms plus jitter
 with a 120s timeout. After each commit lands, the route provisions that
-wallet's orchestrator slice; the allocate retries about every 750ms up to
+wallet's orchestrator slice; the allocate retries about every 400ms up to
 about 12s on round-tracker-lag 409s only, and fails fast on terminal
 `pool settled: allocations are final` denials. A failed allocate never flips
 a funded step to failed (the money moved, it is only recorded on the step).
+Because the phases complete out of order, steps are reassembled into seed
+order before returning. A second concurrent `POST /api/agents/fund` is
+rejected with 409.
 
 ## Treasury rail (`lib/appkit.ts`, `api/agents/treasury/route.ts`)
 
