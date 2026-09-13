@@ -25,6 +25,8 @@ may fund, Circle wallets submit the payments, the contract enforces pool
 economics, The Graph supplies indexed state, and the orchestrator enforces the
 off-chain resource that was bought.
 
+**Demo video:** [youtu.be/jybEvyKE10U](https://youtu.be/jybEvyKE10U)
+
 ## Fast evaluation path
 
 ### Watch for these three outcomes

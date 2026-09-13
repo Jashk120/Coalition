@@ -47,7 +47,7 @@ enforcement that is not there.
 | `ALLOW_INSECURE_DOCKER_TCP` | empty (deny) | no | Set `1` to allow a `tcp://` `DOCKER_HOST`. Prefer the unix socket |
 | `REQUIRE_DOCKER` | empty (warn+memory fallback) | no | Set `1` to fatal when the daemon is unreachable |
 | `DOCKER_NETWORK_MODE` | `none` | no | Pinned `NetworkMode` for every wallet container. Demo exec workloads need no network, so the default isolates them; set `bridge` only if workloads must egress |
-| `RPC_URL` | `https://rpc.testnet.arc.io` | no | Arc JSON-RPC endpoint for settle polling and transfer receipt checks. Must be `https`, except `http://localhost`/`127.0.0.1` (allowed for httptest boot tests) — anything else is fatal at startup. A private endpoint is recommended in shared deploys: the public free tier 429s under aggregate dashboard (agents 10s, activity 15s, usage 1s) plus orchestrator (`POLL_INTERVAL`) polling |
+| `RPC_URL` | `https://rpc.testnet.arc.io` | no | Arc JSON-RPC endpoint for settle polling and transfer receipt checks. Must be `https`, except `http://localhost`/`127.0.0.1` (allowed for httptest boot tests) — anything else is fatal at startup. A private endpoint is recommended in shared deploys: the public free tier 429s under aggregate dashboard (agents 10s, usage 1s) plus orchestrator (`POLL_INTERVAL`) polling |
 | `POLL_INTERVAL` | `5s` | no | Settle poll cadence |
 | `CONFIRMATIONS` | `1` | no | Minimum confirmations for settle logs and transfer receipts alike |
 | `REAPER_INTERVAL` | `10s` | no | Background reaper tick: kills containers whose billed usage plus in-flight estimate exceeds budget |

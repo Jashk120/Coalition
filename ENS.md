@@ -9,7 +9,8 @@ on `funderWallet == ENS wallet` (see §7b). Resolution was re-verified
 2026-09-11 via `cast` against
 `https://ethereum-sepolia-rpc.publicnode.com`, independent of the repo's
 earlier receipts. EAC grant/revoke has not been exercised live. The demo
-video and live demo URL are not yet published (§8).
+video is published at https://youtu.be/jybEvyKE10U; the live demo URL is not
+yet published (§8).
 
 Repo is PUBLIC: https://github.com/Jashk120/Coalition (verified via GitHub
 API: `private=false`). ENS commits are in `origin/main`.
@@ -22,7 +23,7 @@ API: `private=false`). ENS commits are in `origin/main`.
 | 2 | Subname registry + EAC central to identity flow, resolving to Arc wallet to ERC-8004, not hardcoded | PASS on resolution and registry, AVAILABLE on EAC (not exercised live) | Scored path `resolveEnsToAgents` (subname to Arc wallet to agent ids) verified live for all 4 subnames 2026-09-11 with no fallback; own subname registry USED (§2, §5); EAC selectors present in resolver bytecode but no live grant exercised (§4) |
 | 3 | Central, not cosmetic | PASS | ENS gates `GET /api/agents`, `POST /api/agents/run`, and `POST /api/agents/fund` (§7b); unresolved seeds get no wallet and cannot run or fund |
 | 4 | Public repo + ENS.md receipt (Sepolia addresses, EAC roles) | PASS on receipt, PASS on visibility | This file; repo public at https://github.com/Jashk120/Coalition, ENS commits in `origin/main` |
-| 5 | Video OR live demo | PENDING | Not yet published; §8 carries the recording plan |
+| 5 | Video OR live demo | PASS | Video published: https://youtu.be/jybEvyKE10U (§8) |
 | 6 | Beta caveats on record | PASS | §9 below |
 
 The identity and attestation path — subname registry to Arc wallet to the funding gate:
@@ -296,7 +297,8 @@ beat runs about 60 seconds inside the resale + ENS segment.
 | ENS discovery | Live `agent1.agentpool.eth` to Arc wallet to ERC-8004 identity + reputation |
 | Track-fit card (ENS) | Subname registry + EAC summary |
 
-The video and the live demo URL are not yet published.
+The demo video is published: https://youtu.be/jybEvyKE10U. The live demo URL
+is not yet published.
 
 ## 9. Honest limitations (beta on record)
 
@@ -324,8 +326,8 @@ The video and the live demo URL are not yet published.
   docs-table `ETHRegistry` generation. Factory address + generation that
   owns this deployment are not yet recorded; they are needed to reproduce it.
 - The App Kit treasury rail uses the provider wallet (funder 4) as its source.
-  No live EAC grant has been exercised (§4). The demo video and live demo URL
-  are not yet published (§8).
+  No live EAC grant has been exercised (§4). The demo video is published
+  (https://youtu.be/jybEvyKE10U); the live demo URL is not yet published (§8).
 - ENS records align with the Circle funder wallets, and `POST /api/agents/fund`
   signs with those Circle wallets (§3, §7b); a funder the name does not resolve
   to fails closed. Per-subname resolvers are not used.
@@ -356,4 +358,4 @@ Open items (not yet exercised, not counted as verified):
 - Runtime `agentId` registration + `resolveEnsToAgents` cross-check.
 - The per-subname vs shared resolver decision (§5).
 - The factory address/generation that owns registry `0x365d…e1dc34`.
-- The demo video and live demo URL (§8).
+- The live demo URL (§8).

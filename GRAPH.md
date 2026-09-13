@@ -11,11 +11,11 @@ subgraph when the endpoint is set. Live verified 2026-09-11 against the
 Studio dev endpoint: `_meta.hasIndexingErrors = false`, one `Pool` entity,
 47 commitments, 0 dropouts. The subgraph is deployed to Subgraph Studio only;
 it has NOT been published to the decentralized network. No Substreams, MCP,
-A2A, or Graph-targeted x402 usage exists (§8). The demo video is not yet
-published.
+A2A, or Graph-targeted x402 usage exists (§8). The demo video is published
+at https://youtu.be/jybEvyKE10U.
 
 Coalition enters the Start Fresh (Net-new) build pool: git history begins
-2026-09-04 and runs to 2026-09-11.
+2026-09-04 and runs to 2026-09-13.
 
 ## 1. Qualification fit (per track requirement)
 
@@ -28,7 +28,7 @@ Track: "Best AI Tooling or AI Use Case with The Graph (From Scratch)".
 | 3 | App consumes the subgraph (AI tooling or AI use case) | PASS on app reads and agent reasoning | `readPoolState` is subgraph-first, `readRoster` is subgraph-or-bust, `discoverPools` scans the subgraph (§6); the autonomous agent-5 path (`POST /api/agents/resale-run`) decides from `getPoolHealth`, fail-closed (§10). Only the dashboard demo loop (`POST /api/agents/run`) still decides from on-chain reads |
 | 4 | Central, not cosmetic | PASS | `readRoster()` throws `"subgraph roster unavailable: SUBGRAPH_ENDPOINT is not configured"` when unset; no silent fallback exists on that path (`app/lib/pool-state.ts`) |
 | 5 | Reproducible deployment receipt | PASS | Manifest, mapping, dependency, endpoint, IPFS hash, and exact deploy command in §2; Studio page + query endpoint listed |
-| 6 | Video demo | PENDING | Not yet published; the roster path (no fallback) is the recommended proof beat |
+| 6 | Video demo | PASS | Published: https://youtu.be/jybEvyKE10U; the roster path (no fallback) is the recommended proof beat |
 
 How pool events reach the subgraph, and which reads depend on it:
 

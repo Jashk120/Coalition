@@ -36,7 +36,7 @@ Repo is PUBLIC: https://github.com/Jashk120/Coalition.
 | 5 | Circle Contracts (Smart Contract Platform) | PASS | `app/deploy-pool-circle.mjs` deploys `ResourcePool` through Circle Contracts on `ARC-TESTNET` (§4.3) |
 | 6 | x402 / Nanopayments resale rail as a complement | PASS (server-side) | `POST /api/resale/quota` settles through Circle Gateway middleware on `eip155:5042002`; the atomic buyer settlement itself is Multicall3 + USDC (§4.4, §4.5) |
 | 7 | Public GitHub repo + receipt | PASS | Repo public; this file |
-| 8 | Demo video | PENDING | Not yet published (§9) |
+| 8 | Demo video | PASS | Published: https://youtu.be/jybEvyKE10U (§9) |
 | 9 | Architecture diagram | PASS | §2 |
 | 10 | Business narrative | PASS | §8 |
 
@@ -99,8 +99,10 @@ The `ResourcePool` constructor order matches `app/deploy-pool-circle.mjs`.
   `executeContractAndWait` (submits, polls to CONFIRMED/COMPLETE, 120s timeout).
 - Route: `POST /api/agents/fund` (`app/app/api/agents/fund/route.ts`). Phase 1
   attests each funder against its ENS subname (`funderWallet === ENS wallet`);
-  phase 2 fires the USDC `approve(address,uint256)` calls; phase 3 commits
-  strictly sequentially with `commit(uint256)` / `commit(uint256,uint256)`.
+  phase 2 fires the USDC `approve(address,uint256)` calls in parallel; phase 3
+  runs one concurrent commit-and-provision task per wallet with `commit(uint256)`
+  / `commit(uint256,uint256)`, the last commit auto-settling the round inline (a
+  second concurrent run is rejected with 409).
 - Env (server-only): `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`,
   `CIRCLE_WALLET_IDS`, `CIRCLE_PROVIDER_WALLET_ID`, `CIRCLE_BUYER_WALLET_ID`.
 - Custody: Circle co-signs; there are no local keys and no `seed-keys.ts` /
@@ -240,7 +242,8 @@ multi-agent pooling protocol needs and should not rebuild.
   (`0xC6f9…B4fd`) as a code fallback; the live deployment and every checked-in
   config point at `0x8b9f…F692` (`.env.example`, subgraph manifest, deploy
   broadcast). Read `NEXT_PUBLIC_POOL_ADDRESS` from env as the source of truth.
-- The demo video and live demo URL are not yet published.
+- The demo video is published at https://youtu.be/jybEvyKE10U. The live demo
+  URL is not yet published.
 
 ## 10. Best DeFi/Onchain Finance Application — submission fit
 
@@ -252,7 +255,7 @@ multi-agent pooling protocol needs and should not rebuild.
 | 4 | Circle Wallets / Circle Contracts as core products | PASS | Developer-Controlled Wallets drive funding and resale (§4.1); Circle Contracts deploys the pool (§4.3) |
 | 5 | Shows why stablecoin-native infra changes what's possible | PASS (narrative) | §8's pooling economics; frame for this track as shared-treasury infrastructure rather than agent-identity infrastructure |
 | 6 | Functional MVP + architecture diagram | PASS | `app/` + `orchestrator/` + `contracts/`; diagram in §2 |
-| 7 | Video demonstration + presentation | PENDING | Not yet published |
+| 7 | Video demonstration + presentation | PASS | Published: https://youtu.be/jybEvyKE10U |
 | 8 | Public GitHub repo | PASS | https://github.com/Jashk120/Coalition |
 
 CCTP, Gateway (the two-way version, not just the resale quota leg), and
@@ -269,7 +272,7 @@ ResourcePool + DCW + App Kit + Circle Contracts, not claim these three.
 | 3 | Use of Agent Stack to connect agents to wallets, USDC payments, onchain actions | PARTIAL | Wallet custody is Circle Developer-Controlled Wallets — a **Circle Wallets** product, separately listed as a core product for this track — not the Circle **Agent Stack** 2-of-2 MPC Agent Wallet product specifically; that path is documented but not shipped (§7, §9) |
 | 4 | Use of Nanopayments, Paymaster, or App Kits for agent-to-agent/service payments | PARTIAL | App Kit is used for treasury re-funding (§4.2); the resale rail uses Circle Gateway + x402 for the quota leg, which is nanopayment-adjacent but is not the Nanopayments or Paymaster product by name |
 | 5 | Functional MVP + architecture diagram | PASS | Same evidence as §10 |
-| 6 | Video demonstration + presentation | PENDING | Not yet published |
+| 6 | Video demonstration + presentation | PASS | Published: https://youtu.be/jybEvyKE10U |
 | 7 | Public GitHub repo | PASS | https://github.com/Jashk120/Coalition |
 
 Honest framing for this track specifically: the agent-to-agent economics are
