@@ -184,6 +184,7 @@ export default function DashboardPage() {
   const rotationInFlight = useRef<Promise<boolean> | null>(null);
   const attemptedExpiredRound = useRef<string | null>(null);
   const [fundError, setFundError] = useState<string | null>(null);
+  const [fundNotice, setFundNotice] = useState<string | null>(null);
   const [fundSteps, setFundSteps] = useState<readonly FundStep[]>([]);
   const [rotateError, setRotateError] = useState<string | null>(null);
   const [rotateResult, setRotateResult] = useState<
@@ -409,6 +410,7 @@ export default function DashboardPage() {
         if (!body.ok) throw new Error(body.error);
         setRotateResult(body.result);
         setFundSteps([]);
+        setFundNotice(null);
         setPlan({ status: "idle" });
         setBuy({ status: "idle" });
         await Promise.all([loadAgents(), loadUsage(), loadMarket()]);
@@ -435,8 +437,25 @@ export default function DashboardPage() {
   }, [agents, funding, freeing, recoverExpiredRound]);
 
   const fundDemo = useCallback(async () => {
+    const roundSettled =
+      agents !== null && (agents.round?.settled ?? agents.poolState.settled);
+    const resourceInUse =
+      usage.status === "ready" &&
+      usage.agents.some(
+        (agent) =>
+          agent.hasContainer === true ||
+          (agent.inFlightCUSeconds ?? 0) > 0 ||
+          (agent.inFlightMBHours ?? 0) > 0,
+      );
+    if (roundSettled && resourceInUse) {
+      setFundNotice(
+        'This round is already settled and agents are still using the resource. Open "Operator tools · reset demo" below and free the pool before funding again.',
+      );
+      return;
+    }
     setFunding(true);
     setFundError(null);
+    setFundNotice(null);
     try {
       // Recheck on click: the displayed snapshot can expire between polls.
       const stateResponse = await fetch("/api/agents", { cache: "no-store" });
@@ -452,6 +471,7 @@ export default function DashboardPage() {
       const body = (await parseJson(response)) as FundResponse;
       if (body.ok) {
         setFundSteps(body.steps);
+        setFundNotice(null);
         await loadAgents();
         await loadUsage();
         await loadMarket();
@@ -463,7 +483,7 @@ export default function DashboardPage() {
     } finally {
       setFunding(false);
     }
-  }, [loadAgents, loadUsage, loadMarket, recoverExpiredRound]);
+  }, [agents, usage, loadAgents, loadUsage, loadMarket, recoverExpiredRound]);
 
   useEffect(() => {
     void loadAgents();
@@ -562,6 +582,7 @@ export default function DashboardPage() {
         return;
       }
       setFreeResult(JSON.stringify(body.freed) ?? "ok");
+      setFundNotice(null);
       const rotateRes = await fetch("/api/agents/rotate", {
         method: "POST",
         cache: "no-store",
@@ -803,6 +824,14 @@ export default function DashboardPage() {
             {rotating ? "Starting new round…" : funding ? "Funding…" : "Fund shared server"}
           </button>
         </div>
+        {fundNotice !== null ? (
+          <div className="state" role="status">
+            This round is already settled and agents are still using the
+            resource. Open{" "}
+            <a href="#operator-tools">Operator tools · reset demo</a> below
+            and free the pool before funding again.
+          </div>
+        ) : null}
         {fundError !== null ? (
           <div className="state state-error" role="alert">
             Fund failed: {fundError}
@@ -814,7 +843,7 @@ export default function DashboardPage() {
         <p className="card-lede">
           Payment and compute allocation are separate steps. Inspect each agent’s transaction and allocation result below.
         </p>
-        <details className="operator-tools"><summary>Operator tools · reset demo</summary>
+        <details className="operator-tools" id="operator-tools"><summary>Operator tools · reset demo</summary>
           <div className="details-body">
             Free pool resets the whole demo loop in one click: containers
             are revoked, the finished round is closed, and a fresh round
