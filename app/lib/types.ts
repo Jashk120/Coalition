@@ -291,3 +291,13 @@ export type TreasuryResponse =
       readonly sends: readonly TreasurySendStep[];
     }
   | { readonly ok: false; readonly error: string };
+
+/**
+ * Pool-global spare capacity headroom from orchestrator GET /capacity.
+ * Plain JSON numbers — attached to resale 409 rejections so the buyer sees
+ * available vs requested capacity instead of a raw error.
+ */
+export type ResaleCapacity = {
+  readonly headroomMB: number;
+  readonly headroomCUMicro: number;
+};

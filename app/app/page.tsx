@@ -12,6 +12,7 @@ import type {
   FundResponse,
   NamespacesResponse,
   NamespaceView,
+  ResaleCapacity,
   RotateResponse,
   FundStep,
   ResolutionView,
@@ -54,11 +55,21 @@ type PlanView = {
   readonly want?: { readonly mem: number; readonly cuMicro: number };
 };
 
+type ResaleWant = {
+  readonly mem: number;
+  readonly cuMicro: number;
+};
+
 type PlanState =
   | { readonly status: "idle" }
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly plan: PlanView }
-  | { readonly status: "error"; readonly message: string };
+  | {
+      readonly status: "error";
+      readonly message: string;
+      readonly capacity?: ResaleCapacity;
+      readonly want?: ResaleWant;
+    };
 
 type BuyResult = {
   readonly buyer: string;
@@ -72,7 +83,12 @@ type BuyState =
   | { readonly status: "idle" }
   | { readonly status: "paying" }
   | { readonly status: "ready"; readonly result: BuyResult }
-  | { readonly status: "error"; readonly message: string };
+  | {
+      readonly status: "error";
+      readonly message: string;
+      readonly capacity?: ResaleCapacity;
+      readonly want?: ResaleWant;
+    };
 
 type UsageState =
   | { readonly status: "loading" }
@@ -150,6 +166,68 @@ function clampPercent(value: number): number {
 
 function formatUsage(value: number): string {
   return Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseResaleCapacity(value: unknown): ResaleCapacity | undefined {
+  if (!isRecord(value)) return undefined;
+  const mb = value["headroomMB"];
+  const cu = value["headroomCUMicro"];
+  if (
+    typeof mb !== "number" ||
+    !Number.isInteger(mb) ||
+    mb < 0 ||
+    typeof cu !== "number" ||
+    !Number.isInteger(cu) ||
+    cu < 0
+  ) {
+    return undefined;
+  }
+  return { headroomMB: mb, headroomCUMicro: cu };
+}
+
+function parseResaleWant(value: unknown): ResaleWant | undefined {
+  if (!isRecord(value)) return undefined;
+  const mem = value["mem"];
+  const cuMicro = value["cuMicro"];
+  if (
+    typeof mem !== "number" ||
+    !Number.isInteger(mem) ||
+    mem < 0 ||
+    typeof cuMicro !== "number" ||
+    !Number.isInteger(cuMicro) ||
+    cuMicro < 0
+  ) {
+    return undefined;
+  }
+  return { mem, cuMicro };
+}
+
+function capacityShortfall(
+  capacity: ResaleCapacity,
+  want: ResaleWant | undefined,
+  retryHint: string,
+): ReactNode {
+  return (
+    <div className="state" role="alert">
+      Not enough capacity for this request.
+      <br />
+      Available: {formatUsage(capacity.headroomMB)} MB /{" "}
+      {formatUsage(capacity.headroomCUMicro)} CU-micro
+      {want !== undefined ? (
+        <>
+          <br />
+          Requested: {formatUsage(want.mem)} MB /{" "}
+          {formatUsage(want.cuMicro)} CU-micro
+        </>
+      ) : null}
+      <br />
+      Lower the memory or compute units and {retryHint}.
+    </div>
+  );
 }
 
 function resolutionFor(
@@ -335,11 +413,23 @@ export default function DashboardPage() {
       });
       const body = (await parseJson(response)) as
         | { readonly ok: true; readonly plan: PlanView }
-        | { readonly ok: false; readonly error: string };
+        | {
+            readonly ok: false;
+            readonly error: string;
+            readonly capacity?: unknown;
+            readonly want?: unknown;
+          };
       if (body.ok) {
         setPlan({ status: "ready", plan: body.plan });
       } else {
-        setPlan({ status: "error", message: body.error });
+        const capacity = parseResaleCapacity(body.capacity);
+        const want = parseResaleWant(body.want);
+        setPlan({
+          status: "error",
+          message: body.error,
+          ...(capacity === undefined ? {} : { capacity }),
+          ...(want === undefined ? {} : { want }),
+        });
       }
     } catch (error) {
       setPlan({
@@ -368,7 +458,12 @@ export default function DashboardPage() {
             readonly to: unknown;
             readonly toToken?: string;
           }
-        | { readonly ok: false; readonly error: string };
+        | {
+            readonly ok: false;
+            readonly error: string;
+            readonly capacity?: unknown;
+            readonly want?: unknown;
+          };
       if (body.ok) {
         setBuy({
           status: "ready",
@@ -383,7 +478,14 @@ export default function DashboardPage() {
         await loadUsage();
         await loadMarket();
       } else {
-        setBuy({ status: "error", message: body.error });
+        const capacity = parseResaleCapacity(body.capacity);
+        const want = parseResaleWant(body.want);
+        setBuy({
+          status: "error",
+          message: body.error,
+          ...(capacity === undefined ? {} : { capacity }),
+          ...(want === undefined ? {} : { want }),
+        });
       }
     } catch (error) {
       setBuy({
@@ -1198,9 +1300,13 @@ export default function DashboardPage() {
           </button>
         </div>
         {plan.status === "error" ? (
-          <div className="state state-error" role="alert">
-            Plan failed: {plan.message}
-          </div>
+          plan.capacity !== undefined ? (
+            capacityShortfall(plan.capacity, plan.want, "preview again")
+          ) : (
+            <div className="state state-error" role="alert">
+              Plan failed: {plan.message}
+            </div>
+          )
         ) : null}
         {plan.status === "ready" ? (
           <div className="plan">
@@ -1220,9 +1326,13 @@ export default function DashboardPage() {
           </div>
         ) : null}
         {buy.status === "error" ? (
-          <div className="state state-error" role="alert">
-            Buy failed: {buy.message}
-          </div>
+          buy.capacity !== undefined ? (
+            capacityShortfall(buy.capacity, buy.want, "try again")
+          ) : (
+            <div className="state state-error" role="alert">
+              Buy failed: {buy.message}
+            </div>
+          )
         ) : null}
         {buy.status === "ready" ? (
           <div className="state">

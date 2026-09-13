@@ -171,6 +171,13 @@ export async function executeResaleBuy(
       route: "POST /api/resale/buy",
       status: upstream.status,
     });
+    // Preserve the orchestrator's conflict class: 409 covers pool_exhausted
+    // (stale plan vs shrunken headroom) and duplicate_payment (replay), both
+    // actionable without a 502 retry. All other statuses keep the 502
+    // collapse so existing buy semantics are unchanged.
+    if (upstream.status === 409) {
+      throw new ResaleBuyError(409, String(detail));
+    }
     throw new ResaleBuyError(502, String(detail));
   }
   const toToken =

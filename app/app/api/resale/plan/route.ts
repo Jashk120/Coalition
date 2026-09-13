@@ -13,6 +13,61 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isCapacityHeadroom(value: unknown): value is {
+  readonly headroomMB: number;
+  readonly headroomCUMicro: number;
+} {
+  if (!isRecord(value)) return false;
+  const mb = value["headroomMB"];
+  const cu = value["headroomCUMicro"];
+  return (
+    typeof mb === "number" &&
+    Number.isInteger(mb) &&
+    mb >= 0 &&
+    typeof cu === "number" &&
+    Number.isInteger(cu) &&
+    cu >= 0
+  );
+}
+
+/**
+ * Best-effort headroom read from orchestrator GET /capacity (public, no
+ * app key). Null when the fetch fails or the shape is bad — callers omit
+ * the capacity field instead of breaking the error response.
+ */
+async function readCapacityHeadroom(): Promise<{
+  readonly headroomMB: number;
+  readonly headroomCUMicro: number;
+} | null> {
+  try {
+    const response = await fetch(`${orchestratorBaseUrl()}/capacity`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      throw new Error(`capacity returned ${String(response.status)}`);
+    }
+    const payload = (await response.json().catch(() => null)) as unknown;
+    if (!isRecord(payload) || !isRecord(payload["headroom"])) {
+      throw new Error("capacity shape malformed");
+    }
+    const headroom = payload["headroom"];
+    if (!isCapacityHeadroom(headroom)) {
+      throw new Error("capacity headroom malformed");
+    }
+    return {
+      headroomMB: headroom.headroomMB,
+      headroomCUMicro: headroom.headroomCUMicro,
+    };
+  } catch (error) {
+    log("warn", "resale.plan.capacity_degraded", {
+      route: "POST /api/resale/plan",
+      error: errorMessage(error),
+    });
+    return null;
+  }
+}
+
 /**
  * POST /api/resale/plan {wallet, cu, mem} — relay to the orchestrator
  * POST /fill-plan and validate the atomic-settlement shape
@@ -69,10 +124,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       typeof payload === "object" && payload !== null && "error" in payload
         ? String((payload as { error: unknown }).error)
         : `fill-plan returned ${String(upstream.status)}`;
-    return NextResponse.json(
-      { ok: false, error: detail },
-      { status: upstream.status === 400 ? 400 : 502 },
-    );
+    const status =
+      upstream.status === 400 ? 400 : upstream.status === 409 ? 409 : 502;
+    if (upstream.status === 409) {
+      const capacity = await readCapacityHeadroom();
+      return NextResponse.json(
+        {
+          ok: false,
+          error: detail,
+          ...(capacity === null ? {} : { capacity }),
+          ...(want === null ? {} : { want }),
+        },
+        { status },
+      );
+    }
+    return NextResponse.json({ ok: false, error: detail }, { status });
   }
   try {
     const plan = parseFillPlan(payload);
