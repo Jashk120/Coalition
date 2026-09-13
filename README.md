@@ -15,6 +15,8 @@ group purchase into a small, fair capacity market.
 > [judge guide](JUDGES.md). It links each claim to the code and the relevant
 > live-evidence receipt.
 
+**Demo video:** [youtu.be/jybEvyKE10U](https://youtu.be/jybEvyKE10U)
+
 ![Coalition pool architecture: agents 1–4 commit USDC to the shared ResourcePool, which settles to the provider or refunds on expiry; the orchestrator hands each funded agent its VPS slice, and resale buyers pay participants directly](assets/Agent-1.png)
 
 ## Why the integrations matter
