@@ -100,8 +100,8 @@ const FAILURE_STATES: readonly string[] = [
   "STUCK",
 ];
 
-const POLL_INTERVAL_MS = 1_000;
-const POLL_JITTER_MS = 250;
+const POLL_INTERVAL_MS = 500;
+const POLL_JITTER_MS = 150;
 const POLL_TIMEOUT_MS = 120_000;
 
 function errorMessage(error: unknown): string {
