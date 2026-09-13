@@ -45,7 +45,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Allocate with patience: the orchestrator's round tracker can lag a fresh
  * round behind the chain, wrongly 409ing the first attempts. Poll about
- * every 750ms (up to ~12s total) and retry only round-lag 409s; a settled
+ * every 400ms (up to ~12s total) and retry only round-lag 409s; a settled
  * round with real stake succeeds once the tracker catches up, usually in
  * ~1-3s. All other errors fail fast with no extra delay.
  *
@@ -178,7 +178,7 @@ async function allocateWithRetry(
     if (!terminal && !isRoundLagError(last.error)) return last;
     const remaining = deadline - Date.now();
     if (remaining <= 0) return last;
-    await sleep(Math.min(750, remaining));
+    await sleep(Math.min(400, remaining));
   }
 }
 
@@ -235,7 +235,29 @@ async function allocateSlice(
  * each funder must equal the wallet its `agentN.agentpool.eth` record resolves
  * to, so a misaligned funder fails closed. Missing CIRCLE_* env yields 503.
  */
+let fundingPending = false;
+
 export async function POST(): Promise<NextResponse<FundResponse>> {
+  if (fundingPending) {
+    log("warn", "agents.fund.busy", { route: "POST /api/agents/fund" });
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "A funding run is already in progress. Wait for it to finish before retrying.",
+      },
+      { status: 409 },
+    );
+  }
+  fundingPending = true;
+  try {
+    return await fund();
+  } finally {
+    fundingPending = false;
+  }
+}
+
+async function fund(): Promise<NextResponse<FundResponse>> {
   const env = readCircleEnv();
   if (!env.ok) {
     log("error", "agents.fund.missing_env", {
@@ -253,10 +275,15 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
     let fundedRoundId: string | undefined;
     // ENS attestation pre-pass: every funder must be the wallet its subname
     // resolves to. Unattested funders never reach approve/commit.
+    // The four ENS+Circle lookups are independent, so run them together:
+    // attestation is a pure read per index. Only the on-chain commit order
+    // is load-bearing (Phase 3 stays strictly sequential).
     const attestations = new Map<number, FunderAttestation>();
-    for (const [index, walletId] of env.walletIds.entries()) {
-      attestations.set(index, await attestFunder({ client, walletId, index }));
-    }
+    await Promise.all(
+      env.walletIds.map(async (walletId, index) => {
+        attestations.set(index, await attestFunder({ client, walletId, index }));
+      }),
+    );
     const attestedLeftFrom = (index: number): number =>
       [...attestations.values()].filter((att) => att.ok && att.index >= index)
         .length;
@@ -426,50 +453,107 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
       ),
     );
 
-    // Phase 3 — sequential commits in seed order. Commits share the round
-    // remainder and the last one auto-settles, so they must not race.
-    for (const [jobAt, job] of jobs.entries()) {
-      const { walletId, wallet, index, roundId, amount, shareAmount, att } = job;
-      const approve = approvals[jobAt];
-      if (approve === undefined || !approve.ok) {
-        const step: FundStep = {
-          wallet,
-          decision: "failed",
-          reason: `approve failed: ${approve === undefined ? "missing" : approve.error}`,
-          roundId,
-          approveTxHash: null,
-          commitTxHash: null,
-          ...attestationFields(att),
-        };
-        slots.push({ index, step });
-        log("info", "agents.fund.step", {
-          wallet,
-          decision: step.decision,
-          reason: step.reason,
-        });
-        continue;
-      }
-      try {
-        const commit =
-          roundId === "0"
-            ? await executeContractAndWait(client, {
-                walletId,
-                contractAddress: POOL_ADDRESS,
-                abiFunctionSignature: "commit(uint256)",
-                abiParameters: [shareAmount],
-              })
-            : await executeContractAndWait(client, {
-                walletId,
-                contractAddress: POOL_ADDRESS,
-                abiFunctionSignature: "commit(uint256,uint256)",
-                abiParameters: [roundId, shareAmount],
-              });
-        if (!commit.ok) {
+    // Phase 3 — one commit+provision task per wallet, run concurrently.
+    // Wallets are distinct and Phase 1 split the remainder so the amounts
+    // sum to at most the target, so the contract's over-commit cap cannot
+    // trip and the commit that lands last settles the round inline. Neither
+    // settlement nor allocation depends on seed order, so this removes the
+    // N sequential on-chain confirmation waits.
+    await Promise.all(
+      jobs.map(async (job, jobAt) => {
+        const { walletId, wallet, index, roundId, amount, shareAmount, att } = job;
+        const approve = approvals[jobAt];
+        if (approve === undefined || !approve.ok) {
           const step: FundStep = {
             wallet,
             decision: "failed",
-            reason: `commit failed: ${commit.error}`,
+            reason: `approve failed: ${approve === undefined ? "missing" : approve.error}`,
             roundId,
+            approveTxHash: null,
+            commitTxHash: null,
+            ...attestationFields(att),
+          };
+          slots.push({ index, step });
+          log("info", "agents.fund.step", {
+            wallet,
+            decision: step.decision,
+            reason: step.reason,
+          });
+          return;
+        }
+        try {
+          const commit =
+            roundId === "0"
+              ? await executeContractAndWait(client, {
+                  walletId,
+                  contractAddress: POOL_ADDRESS,
+                  abiFunctionSignature: "commit(uint256)",
+                  abiParameters: [shareAmount],
+                })
+              : await executeContractAndWait(client, {
+                  walletId,
+                  contractAddress: POOL_ADDRESS,
+                  abiFunctionSignature: "commit(uint256,uint256)",
+                  abiParameters: [roundId, shareAmount],
+                });
+          if (!commit.ok) {
+            const step: FundStep = {
+              wallet,
+              decision: "failed",
+              reason: `commit failed: ${commit.error}`,
+              roundId,
+              approveTxHash: approve.txHash,
+              commitTxHash: null,
+              ...attestationFields(att),
+            };
+            slots.push({ index, step });
+            log("info", "agents.fund.step", {
+              wallet,
+              decision: step.decision,
+              reason: step.reason,
+              approveTxHash: approve.txHash,
+            });
+            return;
+          }
+
+          // Provision the VPS slice right after the commit lands: one fund
+          // click funds on-chain AND allocates compute. The slice goes to the
+          // attested funder address, so the orchestrator's entitlement is keyed
+          // to the same identity ENS names. Retried: the tracker's round view
+          // can lag the commit by seconds. A failed allocate never flips funded
+          // to failed — the money moved, so it is only recorded on the step.
+          const allocation = await allocateWithRetry(wallet, index, true);
+          const step: FundStep = {
+            wallet,
+            decision: "funded",
+            reason: `funded +${fromAtomicUsdc(amount)} USDC to round ${roundId}`,
+            roundId,
+            approveTxHash: approve.txHash,
+            commitTxHash: commit.txHash,
+            allocateOk: allocation.ok,
+            ...(allocation.error === undefined
+              ? {}
+              : { allocateError: allocation.error }),
+            ...attestationFields(att),
+          };
+          slots.push({ index, step });
+          fundedRoundId = roundId;
+          log("info", "agents.fund.step", {
+            wallet,
+            decision: step.decision,
+            reason: step.reason,
+            approveTxHash: approve.txHash,
+            commitTxHash: commit.txHash,
+            allocateOk: allocation.ok,
+            ...(allocation.error === undefined
+              ? {}
+              : { allocateError: allocation.error }),
+          });
+        } catch (error) {
+          const step: FundStep = {
+            wallet,
+            decision: "failed",
+            reason: `failed: ${errorMessage(error)}`,
             approveTxHash: approve.txHash,
             commitTxHash: null,
             ...attestationFields(att),
@@ -479,61 +563,10 @@ export async function POST(): Promise<NextResponse<FundResponse>> {
             wallet,
             decision: step.decision,
             reason: step.reason,
-            approveTxHash: approve.txHash,
           });
-          continue;
         }
-
-        // Provision the VPS slice right after the commit lands: one fund
-        // click funds on-chain AND allocates compute. The slice goes to the
-        // attested funder address, so the orchestrator's entitlement is keyed
-        // to the same identity ENS names. Retried: the tracker's round view
-        // can lag the commit by seconds. A failed allocate never flips funded
-        // to failed — the money moved, so it is only recorded on the step.
-        const allocation = await allocateWithRetry(wallet, index, true);
-        const step: FundStep = {
-          wallet,
-          decision: "funded",
-          reason: `funded +${fromAtomicUsdc(amount)} USDC to round ${roundId}`,
-          roundId,
-          approveTxHash: approve.txHash,
-          commitTxHash: commit.txHash,
-          allocateOk: allocation.ok,
-          ...(allocation.error === undefined
-            ? {}
-            : { allocateError: allocation.error }),
-          ...attestationFields(att),
-        };
-        slots.push({ index, step });
-        fundedRoundId = roundId;
-        log("info", "agents.fund.step", {
-          wallet,
-          decision: step.decision,
-          reason: step.reason,
-          approveTxHash: approve.txHash,
-          commitTxHash: commit.txHash,
-          allocateOk: allocation.ok,
-          ...(allocation.error === undefined
-            ? {}
-            : { allocateError: allocation.error }),
-        });
-      } catch (error) {
-        const step: FundStep = {
-          wallet,
-          decision: "failed",
-          reason: `failed: ${errorMessage(error)}`,
-          approveTxHash: approve.txHash,
-          commitTxHash: null,
-          ...attestationFields(att),
-        };
-        slots.push({ index, step });
-        log("info", "agents.fund.step", {
-          wallet,
-          decision: step.decision,
-          reason: step.reason,
-        });
-      }
-    }
+      }),
+    );
 
     // Seed order is the demo run order: phases complete out of order
     // (parallel approves, retried allocates), so reassemble by slot.
